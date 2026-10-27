@@ -19,16 +19,87 @@ import {
   RefreshCw,
 } from 'lucide-react';
 
+import { CampusMapConfig } from '../../types/hostel';
+
 interface Campus3DViewerProps {
   buildings: BuildingInfo[];
   allEvaluations: FixtureEvaluation[];
   onSelectBuilding: (buildingId: string) => void;
+  overrideMapConfig?: CampusMapConfig;
+  selectedBuildingId?: string;
+  interactiveControls?: boolean;
+}
+
+// Cross-browser safe rounded rectangle drawing
+function drawRoundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number
+) {
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(x, y, w, h, r);
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+}
+
+// Helper to safely load ground texture into material
+function applyGroundTexture(
+  url: string | undefined,
+  mat: THREE.MeshStandardMaterial | null,
+  grid: THREE.GridHelper | null
+) {
+  if (!mat) return;
+
+  if (!url) {
+    mat.map = null;
+    mat.color.setHex(0xe2e8f0);
+    mat.needsUpdate = true;
+    if (grid) grid.visible = true;
+    return;
+  }
+
+  const img = new Image();
+  if (url.startsWith('http')) {
+    img.crossOrigin = 'anonymous';
+  }
+  img.onload = () => {
+    const tex = new THREE.Texture(img);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.needsUpdate = true;
+    mat.map = tex;
+    mat.color.setHex(0xffffff);
+    mat.needsUpdate = true;
+    if (grid) grid.visible = false;
+  };
+  img.onerror = (err) => {
+    console.warn('[Campus3DViewer] Failed to load ground satellite texture:', err);
+  };
+  img.src = url;
 }
 
 export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
   buildings,
   allEvaluations,
   onSelectBuilding,
+  overrideMapConfig,
+  selectedBuildingId,
+  interactiveControls = true,
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const [hoveredBuilding, setHoveredBuilding] = useState<{
@@ -43,11 +114,28 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
   const [filterMode, setFilterMode] = useState<'all' | 'critical' | 'leaks' | 'healthy' | 'uninspected'>('all');
   const [autoRotate, setAutoRotate] = useState<boolean>(true);
   const [selectedJumpId, setSelectedJumpId] = useState<string>('');
+  const [mapVersion, setMapVersion] = useState<number>(0);
 
+  // Auto-rotate state ref to avoid recreating scene
+  const autoRotateRef = useRef<boolean>(autoRotate);
+  useEffect(() => {
+    autoRotateRef.current = autoRotate;
+  }, [autoRotate]);
+
+  // Selected building ref
+  const selectedBuildingIdRef = useRef<string | undefined>(selectedBuildingId);
+  useEffect(() => {
+    selectedBuildingIdRef.current = selectedBuildingId;
+  }, [selectedBuildingId]);
+
+  // Scene references
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const buildingsMapRef = useRef<Map<string, THREE.Group>>(new Map());
+  const groundMatRef = useRef<THREE.MeshStandardMaterial | null>(null);
+  const gridHelperRef = useRef<THREE.GridHelper | null>(null);
+  const currentGroundUrlRef = useRef<string | undefined>(undefined);
   const reqIdRef = useRef<number | null>(null);
 
   // Camera Orbit State
@@ -56,6 +144,39 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
   const prevMouseRef = useRef({ x: 0, y: 0 });
   const targetLookAtRef = useRef(new THREE.Vector3(0, 0, 0));
 
+  // Cross-component and cross-tab update listener (BroadcastChannel + CustomEvent + StorageEvent)
+  useEffect(() => {
+    const handleMapUpdate = () => {
+      setMapVersion((v) => v + 1);
+    };
+
+    let bc: BroadcastChannel | null = null;
+    try {
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        bc = new BroadcastChannel('hostels_campus_map_channel');
+        bc.onmessage = (event) => {
+          if (event.data?.type === 'CAMPUS_MAP_UPDATED') {
+            handleMapUpdate();
+          }
+        };
+      }
+    } catch {}
+
+    window.addEventListener('hostels_campus_map_updated', handleMapUpdate);
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'hostels_map_version' || e.key === 'hostels_campus_map_config') {
+        handleMapUpdate();
+      }
+    });
+
+    return () => {
+      bc?.close();
+      window.removeEventListener('hostels_campus_map_updated', handleMapUpdate);
+      window.removeEventListener('storage', handleMapUpdate);
+    };
+  }, []);
+
+  // 1. Initial Scene Setup (created ONCE, never destroyed on slider or coordinate updates)
   useEffect(() => {
     const container = mountRef.current;
     if (!container) return;
@@ -110,46 +231,39 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
     sunLight.shadow.camera.bottom = -d;
     scene.add(sunLight);
 
+    const mapConfig = overrideMapConfig || getCampusMapConfig();
+
     // 5. Campus Ground Grid & Campus Avenues
     const gridHelper = new THREE.GridHelper(240, 48, 0x94a3b8, 0xcbd5e1);
     gridHelper.position.y = -0.05;
+    if (mapConfig.groundImageUrl) {
+      gridHelper.visible = false;
+    }
+    gridHelperRef.current = gridHelper;
     scene.add(gridHelper);
-
-    const mapConfig = getCampusMapConfig();
 
     // Campus Base Ground Plane (supports Google Map / Satellite ground background)
     const groundGeo = new THREE.PlaneGeometry(240, 240);
     const groundMat = new THREE.MeshStandardMaterial({
       color: mapConfig.groundImageUrl ? 0xffffff : 0xe2e8f0,
-      roughness: 0.9,
+      roughness: 0.6,
       metalness: 0.05,
     });
+    groundMatRef.current = groundMat;
+    currentGroundUrlRef.current = mapConfig.groundImageUrl;
 
+    // Apply initial texture
     if (mapConfig.groundImageUrl) {
-      const loader = new THREE.TextureLoader();
-      loader.load(
-        mapConfig.groundImageUrl,
-        (tex) => {
-          tex.wrapS = THREE.ClampToEdgeWrapping;
-          tex.wrapT = THREE.ClampToEdgeWrapping;
-          groundMat.map = tex;
-          groundMat.needsUpdate = true;
-        },
-        undefined,
-        (err) => {
-          console.warn('[Campus3DViewer] Could not load satellite background texture:', err);
-        }
-      );
+      applyGroundTexture(mapConfig.groundImageUrl, groundMat, gridHelper);
     }
 
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -0.1;
+    ground.position.y = 0;
     ground.receiveShadow = true;
     scene.add(ground);
 
     // 6. Generate 34 Hostel Buildings in Campus Masterplan Layout
-    // Support real-world layout positions from mapConfig, falling back to structured grid
     const cols = 6;
     const spacingX = 17;
     const spacingZ = 17;
@@ -273,10 +387,9 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
       spriteCanvas.height = 110;
       const sCtx = spriteCanvas.getContext('2d');
       if (sCtx) {
-        // Rounded container
+        // Rounded container with cross-browser safe drawRoundedRect
         sCtx.fillStyle = '#ffffff';
-        sCtx.beginPath();
-        sCtx.roundRect(8, 8, 240, 94, 20);
+        drawRoundedRect(sCtx, 8, 8, 240, 94, 20);
         sCtx.fill();
 
         // Border colored by health status
@@ -351,7 +464,6 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
       raycaster.setFromCamera(mouse, camera);
       const groups = Array.from(buildingsMapRef.current.values());
 
-      // Raycast against children of all building groups
       let hitBuildingGroup: THREE.Group | null = null;
       for (const group of groups) {
         const hits = raycaster.intersectObjects(group.children, false);
@@ -364,7 +476,9 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
       if (hitBuildingGroup && hitBuildingGroup.userData?.buildingId) {
         const data = hitBuildingGroup.userData;
         if (hoveredMesh !== hitBuildingGroup) {
-          if (hoveredMesh) hoveredMesh.position.y = 0;
+          if (hoveredMesh && hoveredMesh.userData?.buildingId !== selectedBuildingIdRef.current) {
+            hoveredMesh.position.y = 0;
+          }
           hitBuildingGroup.position.y = 0.6;
           hoveredMesh = hitBuildingGroup;
         }
@@ -381,7 +495,11 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
       }
 
       if (hoveredMesh) {
-        hoveredMesh.position.y = 0;
+        if (hoveredMesh.userData?.buildingId === selectedBuildingIdRef.current) {
+          hoveredMesh.position.y = 0.7;
+        } else {
+          hoveredMesh.position.y = 0;
+        }
         hoveredMesh = null;
       }
       setHoveredBuilding(null);
@@ -427,7 +545,7 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
     // 8. Animation Loop
     let angleBeacon = 0;
     const animate = () => {
-      if (autoRotate && !isDraggingRef.current) {
+      if (autoRotateRef.current && !isDraggingRef.current) {
         sphericalRef.current.theta += 0.0012;
         updateCamera();
       }
@@ -468,7 +586,37 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
       domElement.removeEventListener('wheel', onWheel);
       renderer.dispose();
     };
-  }, [buildings, allEvaluations, autoRotate]);
+  }, [buildings, allEvaluations]);
+
+  // 2. Dynamic Update Effect: Smoothly updates building positions and ground texture WITHOUT WebGL context re-creation
+  useEffect(() => {
+    const mapConfig = overrideMapConfig || getCampusMapConfig();
+
+    // A. Update Building Coordinates and Highlight
+    buildings.forEach((b) => {
+      const grp = buildingsMapRef.current.get(b.id);
+      if (grp) {
+        const pos = mapConfig.buildingPositions[b.id];
+        if (pos) {
+          grp.position.x = pos.x;
+          grp.position.z = pos.z;
+        }
+
+        // Elevate selected building slightly to make it easily recognizable in the editor
+        if (selectedBuildingId && b.id === selectedBuildingId) {
+          grp.position.y = 0.7;
+        } else {
+          grp.position.y = 0;
+        }
+      }
+    });
+
+    // B. Update Ground Image Texture if changed
+    if (mapConfig.groundImageUrl !== currentGroundUrlRef.current) {
+      currentGroundUrlRef.current = mapConfig.groundImageUrl;
+      applyGroundTexture(mapConfig.groundImageUrl, groundMatRef.current, gridHelperRef.current);
+    }
+  }, [overrideMapConfig, mapVersion, selectedBuildingId, buildings]);
 
   // Handle Filtering (dim non-matching buildings)
   useEffect(() => {

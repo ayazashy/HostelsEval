@@ -60,8 +60,30 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
   const [categories, setCategories] = useState(() => loadActiveFacilityCategories());
   const [cloudStatus, setCloudStatus] = useState<{ synced: boolean; warning?: string } | null>(null);
 
+  const [structureVersion, setStructureVersion] = useState<number>(0);
+
+  React.useEffect(() => {
+    const handleStructUpdate = () => {
+      setStructureVersion((v) => v + 1);
+    };
+    window.addEventListener('hostels_structure_updated', handleStructUpdate);
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'hostels_structure_version' || e.key === 'hostels_building_structures') {
+        handleStructUpdate();
+      }
+    });
+
+    return () => {
+      window.removeEventListener('hostels_structure_updated', handleStructUpdate);
+      window.removeEventListener('storage', handleStructUpdate);
+    };
+  }, []);
+
   // Dynamic Structure for Current Building
-  const structure = getBuildingStructure(currentBuilding.id);
+  const structure = React.useMemo(() => {
+    return getBuildingStructure(currentBuilding.id);
+  }, [currentBuilding.id, structureVersion]);
+
   const floorsCount = structure.floorsCount || currentBuilding.floorsCount || 5;
   const activeTowers = structure.floorTowers[selectedFloor] || [1, 2, 3, 4];
 

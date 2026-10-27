@@ -43,6 +43,26 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
   const [activeFloorFilter, setActiveFloorFilter] = useState<number | 'all'>('all');
   const [autoRotate, setAutoRotate] = useState<boolean>(true);
 
+  const [structureVersion, setStructureVersion] = useState<number>(0);
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      setStructureVersion((v) => v + 1);
+    };
+
+    window.addEventListener('hostels_structure_updated', handleUpdate);
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'hostels_structure_version' || e.key === 'hostels_building_structures') {
+        handleUpdate();
+      }
+    });
+
+    return () => {
+      window.removeEventListener('hostels_structure_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, [buildingId]);
+
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -194,9 +214,15 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
       const lCtx = labelCanvas.getContext('2d');
       if (lCtx) {
         lCtx.fillStyle = '#ffffff';
-        lCtx.beginPath();
-        lCtx.roundRect(10, 10, 236, 80, 16);
-        lCtx.fill();
+        if (typeof lCtx.roundRect === 'function') {
+          lCtx.beginPath();
+          lCtx.roundRect(10, 10, 236, 80, 16);
+          lCtx.fill();
+        } else {
+          lCtx.beginPath();
+          lCtx.rect(10, 10, 236, 80);
+          lCtx.fill();
+        }
         lCtx.strokeStyle = '#2563eb';
         lCtx.lineWidth = 6;
         lCtx.stroke();
@@ -338,7 +364,7 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
       domElement.removeEventListener('click', onClick);
       renderer.dispose();
     };
-  }, [buildingId, effectiveFloorsCount, evaluations, selectedWing, selectedFloor, autoRotate]);
+  }, [buildingId, effectiveFloorsCount, evaluations, selectedWing, selectedFloor, autoRotate, structureVersion]);
 
   useEffect(() => {
     meshesMapRef.current.forEach((mesh) => {
