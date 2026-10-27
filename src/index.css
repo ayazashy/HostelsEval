@@ -3,8 +3,6 @@
    Clean, Professional, Institutional Light Palette (White / Slate / Blue)
 ============================================================================ */
 
-@import '/fonts/fonts.css';
-
 :root {
   --font-arabic: 'Cairo', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;

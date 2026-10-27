@@ -52,7 +52,7 @@ export const PasswordModal: React.FC<PasswordModalProps> = ({
 
         <div className="mb-5 pb-3 border-b border-slate-100 flex items-center gap-3">
           <img
-            src="/housing-logo.png"
+            src="./housing-logo.png"
             alt="شعار إدارة الإسكان الطلابي - جامعة الملك سعود"
             className="housing-brand-logo-modal"
             style={{ height: '36px', width: 'auto', maxWidth: '120px', objectFit: 'contain' }}

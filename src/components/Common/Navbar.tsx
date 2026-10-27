@@ -64,7 +64,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           className="cursor-pointer flex items-center gap-3 text-right"
         >
           <img
-            src="/housing-logo.png"
+            src="./housing-logo.png"
             alt="شعار إدارة الإسكان الطلابي - جامعة الملك سعود"
             className="housing-brand-logo-nav"
             style={{ height: '36px', width: 'auto', maxWidth: '130px', objectFit: 'contain' }}

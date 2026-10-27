@@ -75,7 +75,7 @@ export const OfficialReportModal: React.FC<OfficialReportModalProps> = ({
             <div className="border-b-2 border-slate-300 pb-5 flex justify-between items-start">
               <div className="flex items-center gap-4 text-right">
                 <img
-                  src="/housing-logo.png"
+                  src="./housing-logo.png"
                   alt="شعار إدارة الإسكان الطلابي - جامعة الملك سعود"
                   className="housing-brand-logo-modal"
                   style={{ height: '42px', width: 'auto', maxWidth: '140px', objectFit: 'contain' }}

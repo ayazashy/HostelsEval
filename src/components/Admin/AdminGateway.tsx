@@ -84,7 +84,7 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
         {/* Header */}
         <div className="text-center pb-3 border-b border-slate-100 flex flex-col items-center">
           <img
-            src="/housing-logo.png"
+            src="./housing-logo.png"
             alt="شعار إدارة الإسكان الطلابي - جامعة الملك سعود"
             className="housing-brand-logo-card mb-2"
             style={{ height: '44px', width: 'auto', maxWidth: '140px', objectFit: 'contain' }}
