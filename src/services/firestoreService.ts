@@ -8,6 +8,7 @@ import {
   collection,
   doc,
   setDoc,
+  getDoc,
   deleteDoc,
   getDocs,
   query,
@@ -15,7 +16,7 @@ import {
   onSnapshot,
 } from 'firebase/firestore';
 import { db } from './dataConnector';
-import { FixtureEvaluation, EvaluationHistoryEntry } from '../types/hostel';
+import { FixtureEvaluation, EvaluationHistoryEntry, CampusMapConfig } from '../types/hostel';
 import {
   getDecodedSecurityCode,
   getAdminRawSecurityCode,
@@ -300,7 +301,13 @@ export async function fetchAllEvaluations(): Promise<FixtureEvaluation[]> {
 
     querySnapshot.forEach((docSnap) => {
       const data = docSnap.data() as FixtureEvaluation;
-      if (data && data.id && data.buildingId) {
+      if (
+        data &&
+        data.id &&
+        data.buildingId &&
+        data.buildingId !== 'CAMPUS_GLOBAL' &&
+        docSnap.id !== 'GLOBAL_CAMPUS_MAP_CONFIG'
+      ) {
         remoteList.push(data);
         saveToLocalCache(data); // Sync local cache
       }
@@ -688,4 +695,143 @@ export function exportBuildingDataAsCSV(buildingId?: string): string {
 
   return [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
 }
+
+// ============================================================================
+// 11. Public Campus Map Cloud Settings & Reset (Firebase Firestore)
+// ============================================================================
+export const CAMPUS_MAP_CONFIG_DOC_ID = 'GLOBAL_CAMPUS_MAP_CONFIG';
+
+/**
+ * Save Campus Map Configuration (ground image, scale, building positions) to Firebase Firestore
+ * This makes the 3D campus visualization a public setting available to all visitors
+ */
+export async function saveCampusMapToCloud(config: CampusMapConfig): Promise<CloudSaveResult> {
+  const secretCode = getDecodedSecurityCode() || getAdminRawSecurityCode();
+  const rawPayload: Record<string, any> = {
+    ...config,
+    id: CAMPUS_MAP_CONFIG_DOC_ID,
+    buildingId: 'CAMPUS_GLOBAL',
+    secretCode,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const cleanPayload = stripUndefinedValues(rawPayload);
+
+  try {
+    const docRef = doc(db, EVALUATIONS_COLLECTION, CAMPUS_MAP_CONFIG_DOC_ID);
+    await setDoc(docRef, cleanPayload, { merge: true });
+
+    // Also attempt saving to 'settings' collection if accessible
+    try {
+      const settingsRef = doc(db, 'settings', 'campus_map');
+      await setDoc(settingsRef, cleanPayload, { merge: true });
+    } catch {}
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('hostels_cloud_sync_event', {
+          detail: { type: 'campus_map_saved', success: true },
+        })
+      );
+    }
+
+    return { success: true, cloudSynced: true };
+  } catch (err: any) {
+    const errorMsg = err?.message || 'Failed to save campus map to cloud';
+    const errorCode = err?.code || 'unknown';
+    console.warn(`[HostelsEval Firebase] Campus map cloud save failed (${errorCode}):`, errorMsg);
+    return {
+      success: false,
+      cloudSynced: false,
+      cloudError: errorMsg,
+      code: errorCode,
+    };
+  }
+}
+
+/**
+ * Fetch Campus Map Configuration from Firebase Firestore (Public Read)
+ */
+export async function fetchCampusMapFromCloud(): Promise<CampusMapConfig | null> {
+  try {
+    const docRef = doc(db, EVALUATIONS_COLLECTION, CAMPUS_MAP_CONFIG_DOC_ID);
+    const docSnap = await getDoc(docRef);
+
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      if (data && data.buildingPositions) {
+        return {
+          groundImageUrl: data.groundImageUrl || undefined,
+          groundScale: typeof data.groundScale === 'number' ? data.groundScale : 100,
+          groundOffsetX: typeof data.groundOffsetX === 'number' ? data.groundOffsetX : 0,
+          groundOffsetZ: typeof data.groundOffsetZ === 'number' ? data.groundOffsetZ : 0,
+          buildingPositions: data.buildingPositions || {},
+          updatedAt: data.updatedAt,
+        };
+      }
+    }
+
+    // Try fallback from 'settings/campus_map'
+    try {
+      const settingsRef = doc(db, 'settings', 'campus_map');
+      const settingsSnap = await getDoc(settingsRef);
+      if (settingsSnap.exists()) {
+        const data = settingsSnap.data();
+        if (data && data.buildingPositions) {
+          return {
+            groundImageUrl: data.groundImageUrl || undefined,
+            groundScale: typeof data.groundScale === 'number' ? data.groundScale : 100,
+            groundOffsetX: typeof data.groundOffsetX === 'number' ? data.groundOffsetX : 0,
+            groundOffsetZ: typeof data.groundOffsetZ === 'number' ? data.groundOffsetZ : 0,
+            buildingPositions: data.buildingPositions || {},
+            updatedAt: data.updatedAt,
+          };
+        }
+      }
+    } catch {}
+
+    return null;
+  } catch (err) {
+    console.warn('[HostelsEval Firebase] Failed to fetch campus map from cloud:', err);
+    return null;
+  }
+}
+
+/**
+ * Reset Campus Map Configuration in Firebase Firestore back to default grid
+ */
+export async function resetCampusMapInCloud(): Promise<CloudSaveResult> {
+  const secretCode = getDecodedSecurityCode() || getAdminRawSecurityCode();
+  const resetPayload = {
+    id: CAMPUS_MAP_CONFIG_DOC_ID,
+    buildingId: 'CAMPUS_GLOBAL',
+    groundImageUrl: null,
+    groundScale: 100,
+    groundOffsetX: 0,
+    groundOffsetZ: 0,
+    buildingPositions: {},
+    secretCode,
+    updatedAt: new Date().toISOString(),
+  };
+
+  try {
+    const docRef = doc(db, EVALUATIONS_COLLECTION, CAMPUS_MAP_CONFIG_DOC_ID);
+    await setDoc(docRef, resetPayload);
+
+    try {
+      const settingsRef = doc(db, 'settings', 'campus_map');
+      await deleteDoc(settingsRef);
+    } catch {}
+
+    return { success: true, cloudSynced: true };
+  } catch (err: any) {
+    return {
+      success: false,
+      cloudSynced: false,
+      cloudError: err?.message,
+      code: err?.code,
+    };
+  }
+}
+
 

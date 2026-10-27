@@ -4,6 +4,11 @@
 // ============================================================================
 
 import { BuildingStructure, CampusMapConfig } from '../types/hostel';
+import {
+  saveCampusMapToCloud,
+  fetchCampusMapFromCloud,
+  resetCampusMapInCloud,
+} from '../services/firestoreService';
 
 const STRUCTURES_STORAGE_KEY = 'hostels_building_structures';
 const CAMPUS_MAP_STORAGE_KEY = 'hostels_campus_map_config';
@@ -184,9 +189,18 @@ function broadcastCampusMapUpdate(config: CampusMapConfig): void {
 }
 
 /**
+ * Helper to calculate approximate image size in kilobytes (KB)
+ */
+export function getImageSizeKb(base64?: string): number {
+  if (!base64) return 0;
+  return Math.round((base64.length * 0.75) / 1024);
+}
+
+/**
  * Optimize / Compress uploaded satellite / Google Maps image
- * Resizes to max 1600x1600 and compresses as JPEG 0.85
- * Typical output is 180-320 KB (crystal clear yet tiny)
+ * Resizes to max 1000x1000 and compresses as JPEG 0.78
+ * High clarity for architectural blueprints yet tiny file size (~90KB - 160KB)
+ * Fits comfortably in Firestore and loads instantly across all devices
  */
 export async function optimizeGroundImage(input: File | string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -209,7 +223,8 @@ export async function optimizeGroundImage(input: File | string): Promise<string>
       // NOTE: Do NOT set crossOrigin on data: URLs as it causes WebKit/Safari to taint or reject the canvas
       img.onload = () => {
         try {
-          const maxDim = 1600;
+          // Scale down to max 1000px for ultra-lightweight storage and fast rendering
+          const maxDim = 1000;
           let width = img.width;
           let height = img.height;
 
@@ -232,8 +247,12 @@ export async function optimizeGroundImage(input: File | string): Promise<string>
             return;
           }
 
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
           ctx.drawImage(img, 0, 0, width, height);
-          const compressed = canvas.toDataURL('image/jpeg', 0.85);
+
+          // Compress to JPEG 0.78 (typically ~90KB - 160KB for satellite aerial photos)
+          const compressed = canvas.toDataURL('image/jpeg', 0.78);
           resolve(compressed);
         } catch (err) {
           console.warn('[optimizeGroundImage] Canvas compression error, falling back to original:', err);
@@ -300,6 +319,9 @@ export function getCampusMapConfig(): CampusMapConfig {
   if (inMemoryMapConfigCache) {
     return {
       ...inMemoryMapConfigCache,
+      groundScale: inMemoryMapConfigCache.groundScale !== undefined ? inMemoryMapConfigCache.groundScale : 100,
+      groundOffsetX: inMemoryMapConfigCache.groundOffsetX || 0,
+      groundOffsetZ: inMemoryMapConfigCache.groundOffsetZ || 0,
       buildingPositions: {
         ...defaults,
         ...(inMemoryMapConfigCache.buildingPositions || {}),
@@ -314,6 +336,9 @@ export function getCampusMapConfig(): CampusMapConfig {
       const parsed: CampusMapConfig = JSON.parse(raw);
       const combined: CampusMapConfig = {
         ...parsed,
+        groundScale: parsed.groundScale !== undefined ? parsed.groundScale : 100,
+        groundOffsetX: parsed.groundOffsetX || 0,
+        groundOffsetZ: parsed.groundOffsetZ || 0,
         buildingPositions: {
           ...defaults,
           ...(parsed.buildingPositions || {}),
@@ -328,7 +353,9 @@ export function getCampusMapConfig(): CampusMapConfig {
 
   const defConfig: CampusMapConfig = {
     buildingPositions: defaults,
-    groundScale: 1,
+    groundScale: 100,
+    groundOffsetX: 0,
+    groundOffsetZ: 0,
     updatedAt: new Date().toISOString(),
   };
   inMemoryMapConfigCache = defConfig;
@@ -336,16 +363,16 @@ export function getCampusMapConfig(): CampusMapConfig {
 }
 
 /**
- * Background async loader to ensure IndexedDB image data is synced to cache
+ * Background async loader to ensure IndexedDB and Firebase Cloud data are synced to cache
  */
 export function syncCampusMapFromIndexedDB(onSynced?: (config: CampusMapConfig) => void): void {
   if (typeof window === 'undefined') return;
 
+  // 1. Load from IndexedDB
   idbGetCampusMap()
     .then((idbConfig) => {
       if (idbConfig) {
         const current = getCampusMapConfig();
-        // If IndexedDB has ground image or is newer, update memory cache
         const idbTime = idbConfig.updatedAt ? new Date(idbConfig.updatedAt).getTime() : 0;
         const currentTime = current.updatedAt ? new Date(current.updatedAt).getTime() : 0;
         if (
@@ -355,6 +382,9 @@ export function syncCampusMapFromIndexedDB(onSynced?: (config: CampusMapConfig) 
           const defaults = generateDefaultCampusPositions();
           const merged: CampusMapConfig = {
             ...idbConfig,
+            groundScale: idbConfig.groundScale !== undefined ? idbConfig.groundScale : 100,
+            groundOffsetX: idbConfig.groundOffsetX || 0,
+            groundOffsetZ: idbConfig.groundOffsetZ || 0,
             buildingPositions: {
               ...defaults,
               ...(idbConfig.buildingPositions || {}),
@@ -373,6 +403,46 @@ export function syncCampusMapFromIndexedDB(onSynced?: (config: CampusMapConfig) 
     .catch((err) => {
       console.warn('[CampusMapStore] syncFromIDB error:', err);
     });
+
+  // 2. Fetch public configuration from Firebase Cloud
+  fetchCampusMapFromCloud()
+    .then((cloudConfig) => {
+      if (cloudConfig) {
+        const current = getCampusMapConfig();
+        const cloudTime = cloudConfig.updatedAt ? new Date(cloudConfig.updatedAt).getTime() : 0;
+        const currentTime = current.updatedAt ? new Date(current.updatedAt).getTime() : 0;
+
+        if (cloudTime > currentTime || (cloudConfig.groundImageUrl && !current.groundImageUrl)) {
+          const defaults = generateDefaultCampusPositions();
+          const merged: CampusMapConfig = {
+            ...cloudConfig,
+            groundScale: cloudConfig.groundScale !== undefined ? cloudConfig.groundScale : 100,
+            groundOffsetX: cloudConfig.groundOffsetX || 0,
+            groundOffsetZ: cloudConfig.groundOffsetZ || 0,
+            buildingPositions: {
+              ...defaults,
+              ...(cloudConfig.buildingPositions || {}),
+            },
+          };
+
+          inMemoryMapConfigCache = merged;
+          idbSaveCampusMap(merged);
+          try {
+            localStorage.setItem(CAMPUS_MAP_STORAGE_KEY, JSON.stringify(merged));
+          } catch {}
+
+          if (onSynced) onSynced(merged);
+          window.dispatchEvent(
+            new CustomEvent('hostels_campus_map_updated', {
+              detail: merged,
+            })
+          );
+        }
+      }
+    })
+    .catch((err) => {
+      console.warn('[CampusMapStore] Cloud sync failed:', err);
+    });
 }
 
 // Automatically sync on initial load in browser
@@ -386,11 +456,15 @@ if (typeof window !== 'undefined') {
  * Saves to LocalStorage (for fast startup)
  * Broadcasts via BroadcastChannel (for instant multi-tab sync)
  * Dispatches CustomEvent (for same-tab reactivity)
+ * Optionally pushes to Firebase Firestore for public visualization
  */
-export function saveCampusMapConfig(config: CampusMapConfig): void {
+export function saveCampusMapConfig(config: CampusMapConfig, pushToCloud: boolean = true): void {
   try {
     const payload: CampusMapConfig = {
       ...config,
+      groundScale: config.groundScale !== undefined ? config.groundScale : 100,
+      groundOffsetX: config.groundOffsetX || 0,
+      groundOffsetZ: config.groundOffsetZ || 0,
       updatedAt: new Date().toISOString(),
     };
 
@@ -425,8 +499,41 @@ export function saveCampusMapConfig(config: CampusMapConfig): void {
         detail: payload,
       })
     );
+
+    // 7. Push to Firebase Cloud Firestore for public settings
+    if (pushToCloud) {
+      saveCampusMapToCloud(payload).catch((cloudErr) => {
+        console.warn('[CampusMapStore] Cloud save warning:', cloudErr);
+      });
+    }
   } catch (err) {
     console.error('[CampusMapStore] Failed to save campus map config:', err);
   }
 }
+
+/**
+ * Reset Campus Map Configuration back to default grid and clear custom ground image
+ */
+export function resetCampusMapConfig(pushToCloud: boolean = true): CampusMapConfig {
+  const defaults = generateDefaultCampusPositions();
+  const resetConfig: CampusMapConfig = {
+    groundImageUrl: undefined,
+    groundScale: 100,
+    groundOffsetX: 0,
+    groundOffsetZ: 0,
+    buildingPositions: defaults,
+    updatedAt: new Date().toISOString(),
+  };
+
+  saveCampusMapConfig(resetConfig, false);
+
+  if (pushToCloud) {
+    resetCampusMapInCloud().catch((err) => {
+      console.warn('[CampusMapStore] Cloud reset warning:', err);
+    });
+  }
+
+  return resetConfig;
+}
+
 

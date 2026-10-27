@@ -93,7 +93,9 @@ export interface BuildingStructure {
 
 export interface CampusMapConfig {
   groundImageUrl?: string;
-  groundScale?: number;
+  groundScale?: number; // scale percentage (e.g. 50 to 250, default 100)
+  groundOffsetX?: number; // offset X in units (e.g. -50 to 50, default 0)
+  groundOffsetZ?: number; // offset Z in units (e.g. -50 to 50, default 0)
   buildingPositions: Record<
     string,
     {

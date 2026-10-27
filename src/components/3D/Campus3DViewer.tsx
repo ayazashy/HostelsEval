@@ -134,6 +134,7 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const buildingsMapRef = useRef<Map<string, THREE.Group>>(new Map());
   const groundMatRef = useRef<THREE.MeshStandardMaterial | null>(null);
+  const groundMeshRef = useRef<THREE.Mesh | null>(null);
   const gridHelperRef = useRef<THREE.GridHelper | null>(null);
   const currentGroundUrlRef = useRef<string | undefined>(undefined);
   const reqIdRef = useRef<number | null>(null);
@@ -243,7 +244,9 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
     scene.add(gridHelper);
 
     // Campus Base Ground Plane (supports Google Map / Satellite ground background)
-    const groundGeo = new THREE.PlaneGeometry(240, 240);
+    // Base size is 110x110 (harmoniously framing the 85x85 campus cluster)
+    const baseGroundDim = 110;
+    const groundGeo = new THREE.PlaneGeometry(baseGroundDim, baseGroundDim);
     const groundMat = new THREE.MeshStandardMaterial({
       color: mapConfig.groundImageUrl ? 0xffffff : 0xe2e8f0,
       roughness: 0.6,
@@ -259,8 +262,11 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
 
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.rotation.x = -Math.PI / 2;
-    ground.position.y = 0;
+    const scaleFactor = (mapConfig.groundScale || 100) / 100;
+    ground.scale.set(scaleFactor, scaleFactor, 1);
+    ground.position.set(mapConfig.groundOffsetX || 0, 0, mapConfig.groundOffsetZ || 0);
     ground.receiveShadow = true;
+    groundMeshRef.current = ground;
     scene.add(ground);
 
     // 6. Generate 34 Hostel Buildings in Campus Masterplan Layout
@@ -611,7 +617,17 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
       }
     });
 
-    // B. Update Ground Image Texture if changed
+    // B. Update Ground Image Texture, Scale & Offsets in real-time
+    if (groundMeshRef.current) {
+      const scaleFactor = (mapConfig.groundScale || 100) / 100;
+      groundMeshRef.current.scale.set(scaleFactor, scaleFactor, 1);
+      groundMeshRef.current.position.set(
+        mapConfig.groundOffsetX || 0,
+        0,
+        mapConfig.groundOffsetZ || 0
+      );
+    }
+
     if (mapConfig.groundImageUrl !== currentGroundUrlRef.current) {
       currentGroundUrlRef.current = mapConfig.groundImageUrl;
       applyGroundTexture(mapConfig.groundImageUrl, groundMatRef.current, gridHelperRef.current);
