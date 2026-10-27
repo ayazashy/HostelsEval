@@ -53,11 +53,22 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
   const totalFloorsCount = totalBuildingsCount * 5; // 170
 
   // Health distribution
-  const healthyBuildingsCount = buildings.filter((b) => (b.healthScore ?? 100) >= 80).length;
-  const maintenanceBuildingsCount = buildings.filter(
-    (b) => (b.healthScore ?? 100) >= 50 && (b.healthScore ?? 100) < 80
+  const uninspectedBuildingsCount = buildings.filter(
+    (b) => b.healthScore === undefined || b.healthScore === null
   ).length;
-  const criticalBuildingsCount = buildings.filter((b) => (b.healthScore ?? 100) < 50).length;
+  const healthyBuildingsCount = buildings.filter(
+    (b) => b.healthScore !== undefined && b.healthScore !== null && b.healthScore >= 80
+  ).length;
+  const maintenanceBuildingsCount = buildings.filter(
+    (b) =>
+      b.healthScore !== undefined &&
+      b.healthScore !== null &&
+      b.healthScore >= 50 &&
+      b.healthScore < 80
+  ).length;
+  const criticalBuildingsCount = buildings.filter(
+    (b) => b.healthScore !== undefined && b.healthScore !== null && b.healthScore < 50
+  ).length;
 
   const filteredBuildings = buildings
     .filter((b) => {
@@ -66,6 +77,9 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
 
       if (!matchesSearch) return false;
 
+      if (filterDefect === 'uninspected') {
+        return b.healthScore === undefined || b.healthScore === null;
+      }
       if (filterDefect === 'leak') {
         return allEvaluations.some((e) => e.buildingId === b.id && e.defects.includes('leak'));
       }
@@ -85,13 +99,21 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
         );
       }
       if (filterDefect === 'critical') {
-        return (b.healthScore ?? 100) < 50;
+        return b.healthScore !== undefined && b.healthScore !== null && b.healthScore < 50;
       }
       return true;
     })
     .sort((a, b) => {
-      if (sortBy === 'worst') return (a.healthScore || 100) - (b.healthScore || 100);
-      if (sortBy === 'best') return (b.healthScore || 100) - (a.healthScore || 100);
+      if (sortBy === 'worst') {
+        const valA = a.healthScore ?? 999;
+        const valB = b.healthScore ?? 999;
+        return valA - valB;
+      }
+      if (sortBy === 'best') {
+        const valA = a.healthScore ?? -1;
+        const valB = b.healthScore ?? -1;
+        return valB - valA;
+      }
       return a.number - b.number;
     });
 
@@ -243,6 +265,11 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
           <div className="flex items-center gap-3 w-full md:w-auto">
             <span className="text-xs font-bold text-slate-700 shrink-0">تصنيف المباني الـ 34:</span>
             <div className="flex items-center gap-2 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-100 border border-slate-300 text-slate-700 text-xs font-bold">
+                <span className="w-2.5 h-2.5 rounded-full bg-slate-400" />
+                <span>{uninspectedBuildingsCount} مبنى غير مفحوص</span>
+              </span>
+
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                 <span>{healthyBuildingsCount} مبنى سليم (%80-%100)</span>
@@ -261,7 +288,7 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
           </div>
 
           <div className="text-xs text-slate-500 font-medium self-end md:self-auto">
-            4 أجنحة مستقلة في كل مبنى (جناح 1، 2، 3، 4)
+            أجنحة مستقلة في كل مبنى (جناح 1، 2، 3، 4)
           </div>
         </div>
       </section>
@@ -293,6 +320,16 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
               }`}
             >
               الكل ({totalBuildingsCount})
+            </button>
+            <button
+              onClick={() => setFilterDefect('uninspected')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
+                filterDefect === 'uninspected'
+                  ? 'bg-slate-700 text-white'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              <span>⚪ غير مفحوص ({uninspectedBuildingsCount})</span>
             </button>
             <button
               onClick={() => setFilterDefect('critical')}
@@ -346,7 +383,7 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {filteredBuildings.map((building) => {
             const bEvals = allEvaluations.filter((e) => e.buildingId === building.id);
-            const colorDef = getScoreColor(building.healthScore || 100);
+            const colorDef = getScoreColor(building.healthScore);
             const leaksCount = bEvals.filter((e) => e.defects.includes('leak')).length;
             const brokenCount = bEvals.filter((e) => e.status === 'broken').length;
 
@@ -367,7 +404,7 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
                       </span>
                     </div>
                     <span className="text-xs text-slate-500 mt-0.5 block">
-                      4 أجنحة • 5 أدوار
+                      {building.floorsCount || 5} أدوار • أجنحة متعددة
                     </span>
                   </div>
 
@@ -380,7 +417,11 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
                       color: colorDef.hex,
                     }}
                   >
-                    <span>%{building.healthScore || 100}</span>
+                    <span>
+                      {building.healthScore !== undefined && building.healthScore !== null
+                        ? `%${building.healthScore}`
+                        : 'غير مفحوص'}
+                    </span>
                   </div>
                 </div>
 

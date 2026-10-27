@@ -7,6 +7,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { FixtureEvaluation } from '../../types/hostel';
 import { calculateWingHealth, getScoreColor } from '../../utils/healthScore';
+import { getBuildingStructure } from '../../utils/buildingStructureStore';
 import { RotateCw, Eye, Layers } from 'lucide-react';
 
 interface Building3DViewerProps {
@@ -20,17 +21,20 @@ interface Building3DViewerProps {
 
 export const Building3DViewer: React.FC<Building3DViewerProps> = ({
   buildingId,
-  floorsCount = 5,
+  floorsCount: propFloorsCount,
   evaluations,
   selectedWing,
   selectedFloor,
   onSelectSector,
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
+  const structure = getBuildingStructure(buildingId);
+  const effectiveFloorsCount = propFloorsCount || structure.floorsCount || 5;
+
   const [hoveredInfo, setHoveredInfo] = useState<{
     wingId: number;
     floor: number;
-    health: number;
+    health: number | null;
     leaks: number;
     x: number;
     y: number;
@@ -91,9 +95,9 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
     grid.position.y = -0.05;
     scene.add(grid);
 
-    // 5. Central Hub (Nexus connecting the 4 wings)
+    // 5. Central Hub (Nexus connecting the wings)
     const hubRadius = 2.4;
-    const totalHeight = floorsCount * 1.8 + 0.6;
+    const totalHeight = effectiveFloorsCount * 1.8 + 0.6;
     const hubGeo = new THREE.CylinderGeometry(hubRadius, hubRadius, totalHeight, 24);
     const hubMat = new THREE.MeshStandardMaterial({
       color: 0x94a3b8,
@@ -106,7 +110,7 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
     hubMesh.position.y = totalHeight / 2;
     scene.add(hubMesh);
 
-    // 6. Generate 4 Wings
+    // 6. Generate Wings per Floor based on actual BuildingStructure
     const wingAngles = [
       Math.PI / 4,
       (3 * Math.PI) / 4,
@@ -121,13 +125,24 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
 
     meshesMapRef.current.clear();
 
+    // Check which towers exist anywhere in the building to render labels
+    const existingTowerIds = new Set<number>();
+    for (let f = 1; f <= effectiveFloorsCount; f++) {
+      const activeTowers = structure.floorTowers[f] || [1, 2, 3, 4];
+      activeTowers.forEach(w => existingTowerIds.add(w));
+    }
+
     for (let w = 1; w <= 4; w++) {
       const angle = wingAngles[w - 1];
       const cosA = Math.cos(angle);
       const sinA = Math.sin(angle);
       const distFromCenter = hubRadius + wingLength / 2;
 
-      for (let f = 1; f <= floorsCount; f++) {
+      for (let f = 1; f <= effectiveFloorsCount; f++) {
+        const activeTowers = structure.floorTowers[f] || [1, 2, 3, 4];
+        // Only render if this tower exists on floor f
+        if (!activeTowers.includes(w)) continue;
+
         const sectorEvals = getSectorEvaluations(w, f);
         const health = calculateWingHealth(sectorEvals);
         const colorDef = getScoreColor(health);
@@ -323,7 +338,7 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
       domElement.removeEventListener('click', onClick);
       renderer.dispose();
     };
-  }, [buildingId, floorsCount, evaluations, selectedWing, selectedFloor, autoRotate]);
+  }, [buildingId, effectiveFloorsCount, evaluations, selectedWing, selectedFloor, autoRotate]);
 
   useEffect(() => {
     meshesMapRef.current.forEach((mesh) => {
@@ -345,7 +360,7 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
       <div className="absolute top-4 right-4 left-4 flex justify-between items-center pointer-events-none">
         <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm pointer-events-auto flex items-center gap-2">
           <span className="text-xs font-bold text-slate-800">
-            المجسم المعماري • {buildingId} (4 أجنحة)
+            المجسم المعماري • {buildingId} ({effectiveFloorsCount} أدوار)
           </span>
         </div>
 
@@ -363,7 +378,7 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
             >
               الكل
             </button>
-            {Array.from({ length: floorsCount }, (_, i) => i + 1).map((f) => (
+            {Array.from({ length: effectiveFloorsCount }, (_, i) => i + 1).map((f) => (
               <button
                 key={f}
                 onClick={() => setActiveFloorFilter(f)}
@@ -409,9 +424,9 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
               />
             </div>
             <div className="text-xs flex justify-between items-center text-slate-700">
-              <span>نسبة السلامة:</span>
+              <span>الحالة / السلامة:</span>
               <span className="font-bold text-sm" style={{ color: getScoreColor(hoveredInfo.health).hex }}>
-                %{hoveredInfo.health}
+                {hoveredInfo.health !== null ? `%${hoveredInfo.health}` : 'غير مفحوص'}
               </span>
             </div>
             {hoveredInfo.leaks > 0 && (
@@ -426,6 +441,10 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
       {/* Legend */}
       <div className="absolute bottom-3 right-4 left-4 flex justify-between items-center pointer-events-none text-xs">
         <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4 pointer-events-auto">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-slate-400" />
+            <span className="text-slate-700">غير مفحوص</span>
+          </div>
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-600" />
             <span className="text-slate-700">سليم (80-100%)</span>

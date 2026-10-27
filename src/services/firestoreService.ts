@@ -8,13 +8,14 @@ import {
   collection,
   doc,
   setDoc,
+  deleteDoc,
   getDocs,
   query,
   where,
   onSnapshot,
 } from 'firebase/firestore';
 import { db } from './dataConnector';
-import { FixtureEvaluation } from '../types/hostel';
+import { FixtureEvaluation, EvaluationHistoryEntry } from '../types/hostel';
 import {
   getDecodedSecurityCode,
   getAdminRawSecurityCode,
@@ -154,6 +155,26 @@ export async function saveEvaluation(evaluation: FixtureEvaluation): Promise<Clo
 
   // Update local cache for instant UI responsiveness
   saveToLocalCache(evaluation);
+
+  // Record timeline scan event
+  recordEvaluationHistory({
+    id: `scan_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    fixtureId: evaluation.id,
+    buildingId: evaluation.buildingId,
+    floor: evaluation.floor,
+    wingId: evaluation.wingId,
+    categoryCode: evaluation.categoryCode,
+    fixtureTypeCode: evaluation.fixtureTypeCode,
+    fixtureNameAr: evaluation.fixtureTypeCode,
+    status: evaluation.status,
+    defects: evaluation.defects || [],
+    notes: evaluation.notes,
+    rating: evaluation.rating,
+    photoBase64: evaluation.photoBase64,
+    inspectorName: evaluation.inspectorName,
+    timestamp: new Date().toISOString(),
+    isResolved: evaluation.status === 'operational',
+  });
 
   // Strip all undefined properties (e.g. photoBase64 if not taken) so Firestore accepts the document
   const rawPayload: Record<string, any> = {
@@ -472,3 +493,199 @@ export async function testFirebaseCloudConnection(): Promise<CloudConnectionTest
     latencyMs,
   };
 }
+
+// ============================================================================
+// 8. Inspection Timeline & Defect Follow-up History
+// ============================================================================
+export const TIMELINE_STORAGE_KEY = 'hostels_inspection_timeline';
+
+export function getBuildingTimeline(buildingId?: string): EvaluationHistoryEntry[] {
+  try {
+    const raw = localStorage.getItem(TIMELINE_STORAGE_KEY);
+    if (!raw) return [];
+    const entries: EvaluationHistoryEntry[] = JSON.parse(raw);
+    if (!Array.isArray(entries)) return [];
+
+    if (buildingId) {
+      return entries.filter(
+        (e) => e.buildingId.toUpperCase() === buildingId.toUpperCase()
+      );
+    }
+    return entries;
+  } catch (err) {
+    console.warn('[FirestoreService] Failed to load timeline:', err);
+    return [];
+  }
+}
+
+export function recordEvaluationHistory(entry: EvaluationHistoryEntry): void {
+  try {
+    const current = getBuildingTimeline();
+    // Keep most recent first (up to 500 records)
+    const updated = [entry, ...current].slice(0, 500);
+    localStorage.setItem(TIMELINE_STORAGE_KEY, JSON.stringify(updated));
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('hostels_timeline_updated', {
+          detail: { entry, buildingId: entry.buildingId },
+        })
+      );
+    }
+  } catch (err) {
+    console.warn('[FirestoreService] Failed to record timeline entry:', err);
+  }
+}
+
+export function resolveTimelineIssue(
+  historyId: string,
+  resolutionNotes: string,
+  resolvedBy: string
+): void {
+  try {
+    const current = getBuildingTimeline();
+    const updated = current.map((item) => {
+      if (item.id === historyId) {
+        return {
+          ...item,
+          isResolved: true,
+          resolutionNotes,
+          resolvedBy,
+          resolvedAt: new Date().toISOString(),
+        };
+      }
+      return item;
+    });
+    localStorage.setItem(TIMELINE_STORAGE_KEY, JSON.stringify(updated));
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('hostels_timeline_updated', {
+          detail: { historyId, isResolved: true },
+        })
+      );
+    }
+  } catch (err) {
+    console.warn('[FirestoreService] Failed to resolve timeline issue:', err);
+  }
+}
+
+// ============================================================================
+// 9. Reset Building Evaluations (Per-Building Reset)
+// ============================================================================
+export async function resetBuildingEvaluations(
+  buildingId: string
+): Promise<{ success: boolean; clearedCount: number; error?: string }> {
+  const bId = buildingId.toUpperCase();
+  const cache = getLocalCache();
+  let clearedCount = 0;
+  const remaining: Record<string, FixtureEvaluation> = {};
+  const keysToDelete: string[] = [];
+
+  for (const [id, evalItem] of Object.entries(cache)) {
+    if (evalItem.buildingId.toUpperCase() === bId) {
+      clearedCount += 1;
+      keysToDelete.push(id);
+    } else {
+      remaining[id] = evalItem;
+    }
+  }
+
+  // Update local cache
+  try {
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(remaining));
+  } catch (err) {
+    console.warn('Failed to update local cache during reset:', err);
+  }
+
+  // Also clear timeline history for this building
+  try {
+    const timeline = getBuildingTimeline();
+    const remainingTimeline = timeline.filter((t) => t.buildingId.toUpperCase() !== bId);
+    localStorage.setItem(TIMELINE_STORAGE_KEY, JSON.stringify(remainingTimeline));
+  } catch (err) {
+    console.warn('Failed to clear timeline during reset:', err);
+  }
+
+  // Delete from Firestore if authorized
+  const secretCode = getDecodedSecurityCode() || getAdminRawSecurityCode();
+  if (secretCode && keysToDelete.length > 0) {
+    try {
+      await Promise.all(
+        keysToDelete.map((id) => deleteDoc(doc(db, EVALUATIONS_COLLECTION, id)))
+      );
+    } catch (err: any) {
+      console.warn('[Firestore] Remote delete failed during reset:', err);
+    }
+  }
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('hostels_building_reset', {
+        detail: { buildingId: bId, clearedCount },
+      })
+    );
+  }
+
+  return { success: true, clearedCount };
+}
+
+// ============================================================================
+// 10. Data Export (JSON & CSV per Building or All)
+// ============================================================================
+export function exportBuildingDataAsJSON(buildingId?: string): string {
+  const allEvaluations = getAllCachedEvaluations();
+  const filteredEvals = buildingId
+    ? allEvaluations.filter((e) => e.buildingId.toUpperCase() === buildingId.toUpperCase())
+    : allEvaluations;
+
+  const timeline = getBuildingTimeline(buildingId);
+
+  const exportPayload = {
+    exportDate: new Date().toISOString(),
+    buildingId: buildingId ? buildingId.toUpperCase() : 'ALL_BUILDINGS',
+    totalEvaluations: filteredEvals.length,
+    evaluations: filteredEvals,
+    timelineHistory: timeline,
+  };
+
+  return JSON.stringify(exportPayload, null, 2);
+}
+
+export function exportBuildingDataAsCSV(buildingId?: string): string {
+  const allEvaluations = getAllCachedEvaluations();
+  const filteredEvals = buildingId
+    ? allEvaluations.filter((e) => e.buildingId.toUpperCase() === buildingId.toUpperCase())
+    : allEvaluations;
+
+  const headers = [
+    'معرف المرفق (Fixture ID)',
+    'المبنى (Building)',
+    'الدور (Floor)',
+    'الجناح/البرج (Wing/Tower)',
+    'التصنيف (Category)',
+    'نوع المرفق (Type)',
+    'الحالة (Status)',
+    'الأعطال المرصودة (Defects)',
+    'الملاحظات (Notes)',
+    'اسم الفاحص (Inspector)',
+    'تاريخ التقييم (Updated At)',
+  ];
+
+  const rows = filteredEvals.map((e) => [
+    `"${e.id}"`,
+    `"${e.buildingId}"`,
+    `"${e.floor}"`,
+    `"${e.wingId}"`,
+    `"${e.categoryCode}"`,
+    `"${e.fixtureTypeCode}"`,
+    `"${e.status === 'operational' ? 'سليم' : e.status === 'needs_maintenance' ? 'يحتاج صيانة' : 'عاطل'}"`,
+    `"${(e.defects || []).join(' - ')}"`,
+    `"${(e.notes || '').replace(/"/g, '""')}"`,
+    `"${e.inspectorName || 'غير محدد'}"`,
+    `"${e.updatedAt}"`,
+  ]);
+
+  return [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+}
+

@@ -16,6 +16,7 @@ import { compressAndWatermarkImage } from '../../utils/imageCompressor';
 import { CloudSaveResult } from '../../services/firestoreService';
 import {
   Camera,
+  Image as ImageIcon,
   CheckCircle2,
   AlertTriangle,
   XCircle,
@@ -336,25 +337,40 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
               </button>
             </div>
           ) : (
-            <label className="cursor-pointer border border-dashed border-slate-300 hover:border-blue-400 rounded-xl p-2.5 flex items-center justify-center gap-2 text-xs text-slate-600 bg-slate-50 hover:bg-white transition h-24">
-              <input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={handlePhotoCapture}
-                className="hidden"
-                disabled={isCompressing}
-              />
-              <Camera className="w-5 h-5 text-slate-400" />
-              <div className="flex flex-col text-right">
-                <span className="font-bold text-slate-700">
-                  {isCompressing ? 'جاري المعالجة...' : 'التقاط صورة توثيقية'}
+            <div className="grid grid-cols-2 gap-1.5 h-24">
+              {/* Option 1: Direct Camera Snap */}
+              <label className="cursor-pointer border border-dashed border-slate-300 hover:border-blue-500 rounded-xl p-2 flex flex-col items-center justify-center gap-1 text-center bg-slate-50 hover:bg-white transition group">
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handlePhotoCapture}
+                  className="hidden"
+                  disabled={isCompressing}
+                />
+                <Camera className="w-5 h-5 text-slate-500 group-hover:text-blue-600 transition" />
+                <span className="font-bold text-[11px] text-slate-700 leading-tight">
+                  {isCompressing ? 'جاري...' : 'التقاط بالكاميرا'}
                 </span>
-                <span className="text-[10px] text-slate-500">
-                  تُضغط تلقائياً مع ختم التاريخ والرقم
+                <span className="text-[9px] text-slate-400">تصوير مباشر</span>
+              </label>
+
+              {/* Option 2: Upload from Library / Gallery */}
+              <label className="cursor-pointer border border-dashed border-slate-300 hover:border-violet-500 rounded-xl p-2 flex flex-col items-center justify-center gap-1 text-center bg-slate-50 hover:bg-white transition group">
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handlePhotoCapture}
+                  className="hidden"
+                  disabled={isCompressing}
+                />
+                <ImageIcon className="w-5 h-5 text-slate-500 group-hover:text-violet-600 transition" />
+                <span className="font-bold text-[11px] text-slate-700 leading-tight">
+                  {isCompressing ? 'جاري...' : 'اختيار من المعرض'}
                 </span>
-              </div>
-            </label>
+                <span className="text-[9px] text-slate-400">مكتبة الصور</span>
+              </label>
+            </div>
           )}
         </div>
 

@@ -83,81 +83,21 @@ export function App() {
 
   useEffect(() => {
     loadAllEvaluations();
+
+    const handleResetEvent = () => {
+      loadAllEvaluations();
+    };
+
+    window.addEventListener('hostels_building_reset', handleResetEvent);
+    return () => {
+      window.removeEventListener('hostels_building_reset', handleResetEvent);
+    };
   }, []);
 
   const loadAllEvaluations = async () => {
     const evals = await fetchAllEvaluations();
-    if (evals.length === 0) {
-      seedInitialEvaluations();
-    } else {
-      setAllEvaluations(evals);
-      updateBuildingsStats(evals);
-    }
-  };
-
-  const seedInitialEvaluations = async () => {
-    const samples: FixtureEvaluation[] = [
-      {
-        id: 'B14-W2-F3-BTH-SNK-01',
-        buildingId: 'B14',
-        wingId: 2,
-        floor: 3,
-        categoryCode: 'BTH',
-        fixtureTypeCode: 'SNK',
-        fixtureIndex: 1,
-        status: 'broken',
-        defects: ['leak', 'rust', 'detached'],
-        notes: 'الحنفية مخلوعة وتسرب مياه باستمرار أسفل المغسلة',
-        rating: 1,
-        hasPhoto: false,
-        inspectorName: 'سليمان - رائد مبنى 14',
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'B14-W2-F3-BTH-TOI-01',
-        buildingId: 'B14',
-        wingId: 2,
-        floor: 3,
-        categoryCode: 'BTH',
-        fixtureTypeCode: 'TOI',
-        fixtureIndex: 1,
-        status: 'broken',
-        defects: ['leak', 'bad_odor'],
-        notes: 'تسريب مستمر من السيفون ورائحة كريهة',
-        rating: 1,
-        hasPhoto: false,
-        inspectorName: 'سليمان - رائد مبنى 14',
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 'B03-W4-F1-BTH-TOI-02',
-        buildingId: 'B03',
-        wingId: 4,
-        floor: 1,
-        categoryCode: 'BTH',
-        fixtureTypeCode: 'TOI',
-        fixtureIndex: 2,
-        status: 'broken',
-        defects: ['broken', 'clogged'],
-        notes: 'المرحاض مسدود وخارج الخدمة تماماً',
-        rating: 1,
-        hasPhoto: false,
-        inspectorName: 'رائد مبنى 3',
-        updatedAt: new Date().toISOString(),
-      },
-    ];
-
-    for (const item of samples) {
-      saveToLocalCache(item);
-    }
-    setAllEvaluations(samples);
-    updateBuildingsStats(samples);
-
-    if (isAdminUnlocked() || getActiveLeaderAuth()) {
-      for (const item of samples) {
-        await saveEvaluation(item);
-      }
-    }
+    setAllEvaluations(evals);
+    updateBuildingsStats(evals);
   };
 
   useEffect(() => {
@@ -189,6 +129,14 @@ export function App() {
         return {
           ...b,
           healthScore: health,
+          status:
+            health === null
+              ? 'uninspected'
+              : health >= 80
+              ? 'good'
+              : health >= 50
+              ? 'warning'
+              : 'critical',
           stats: {
             totalEvaluations: bEvals.length,
             criticalIssues: criticals,

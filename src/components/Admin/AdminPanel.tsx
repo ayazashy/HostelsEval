@@ -64,7 +64,13 @@ import {
   KeyRound,
   ShieldAlert,
   ArrowUpRight,
+  Building2,
+  Map,
+  HardDriveDownload,
 } from 'lucide-react';
+import { BuildingStructureEditor } from './BuildingStructureEditor';
+import { CampusMapEditor } from './CampusMapEditor';
+import { DataManagementTab } from './DataManagementTab';
 
 interface AdminPanelProps {
   featureFlags: AdminFeatureFlags;
@@ -83,7 +89,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   allEvaluations = [],
   onRefreshEvaluations,
 }) => {
-  const [activeTab, setActiveTab] = useState<'features' | 'leaders' | 'facilities' | 'cloud' | 'logs'>('features');
+  const [activeTab, setActiveTab] = useState<
+    'features' | 'architecture' | 'campus_map' | 'data_management' | 'leaders' | 'facilities' | 'cloud' | 'logs'
+  >('features');
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [logs, setLogs] = useState<AuditLogEntry[]>(getAuditLogs());
   const [searchLeader, setSearchLeader] = useState('');
@@ -418,6 +426,42 @@ service cloud.firestore {
         >
           <Power className="w-4 h-4" />
           <span>تفعيل وتعطيل الميزات ({Object.values(featureFlags).filter(Boolean).length}/5)</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('architecture')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+            activeTab === 'architecture'
+              ? 'bg-slate-900 text-white shadow-sm'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <Building2 className="w-4 h-4 text-indigo-500" />
+          <span>هيكل الأدوار والأبراج</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('campus_map')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+            activeTab === 'campus_map'
+              ? 'bg-slate-900 text-white shadow-sm'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <Map className="w-4 h-4 text-emerald-500" />
+          <span>مخطط الحرم وخريطة 3D</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('data_management')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+            activeTab === 'data_management'
+              ? 'bg-slate-900 text-white shadow-sm'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <Database className="w-4 h-4 text-blue-500" />
+          <span>إدارة البيانات والتصدير</span>
         </button>
 
         <button
@@ -1316,6 +1360,17 @@ service cloud.firestore {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Architecture & Floors / Towers Editor */}
+      {activeTab === 'architecture' && <BuildingStructureEditor />}
+
+      {/* Campus Map & Google Map Coordinates 3D Editor */}
+      {activeTab === 'campus_map' && <CampusMapEditor />}
+
+      {/* Data Management, Export & Per-Building Reset */}
+      {activeTab === 'data_management' && (
+        <DataManagementTab onRefreshEvaluations={onRefreshEvaluations} />
       )}
     </div>
   );

@@ -8,6 +8,8 @@ import { BuildingInfo, FixtureEvaluation } from '../../types/hostel';
 import { Building3DViewer } from '../3D/Building3DViewer';
 import { WING_NAMES_AR } from '../../config/buildings';
 import { summarizeWing, getScoreColor } from '../../utils/healthScore';
+import { getBuildingStructure } from '../../utils/buildingStructureStore';
+import { TimelineViewer } from '../Timeline/TimelineViewer';
 import {
   ArrowRight,
   ClipboardEdit,
@@ -15,6 +17,7 @@ import {
   Camera,
   Layers,
   Lock,
+  Clock,
 } from 'lucide-react';
 
 interface BuildingDetailProps {
@@ -39,6 +42,9 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
   const [selectedWing, setSelectedWing] = useState<number | null>(null);
   const [selectedFloor, setSelectedFloor] = useState<number | null>(null);
   const [activePhotoModal, setActivePhotoModal] = useState<string | null>(null);
+
+  const structure = getBuildingStructure(building.id);
+  const floorsCount = structure.floorsCount || building.floorsCount || 5;
 
   const handleSelectSector = (wingId: number, floor: number) => {
     setSelectedWing(wingId);
@@ -120,7 +126,7 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
 
         <Building3DViewer
           buildingId={building.id}
-          floorsCount={building.floorsCount}
+          floorsCount={floorsCount}
           evaluations={evaluations}
           selectedWing={selectedWing}
           selectedFloor={selectedFloor}
@@ -128,11 +134,11 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
         />
       </div>
 
-      {/* 4 Wings Analytical Breakdown */}
+      {/* Wings Analytical Breakdown */}
       <div className="flex flex-col gap-3">
         <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
           <Layers className="w-4 h-4 text-slate-600" />
-          <span>حالة أجنحة المبنى الـ 4:</span>
+          <span>حالة أجنحة المبنى:</span>
         </h3>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -157,14 +163,14 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
                     </h4>
                   </div>
                   <div
-                    className="w-11 h-11 rounded-xl flex items-center justify-center font-black font-mono text-xs border"
+                    className="w-14 h-10 px-2 rounded-xl flex items-center justify-center font-bold text-xs border"
                     style={{
                       backgroundColor: `${wColor.hex}15`,
                       borderColor: `${wColor.hex}40`,
                       color: wColor.hex,
                     }}
                   >
-                    %{wing.healthScore}
+                    {wing.healthScore !== null ? `%${wing.healthScore}` : 'غير مفحوص'}
                   </div>
                 </div>
 
@@ -250,6 +256,13 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
           </div>
         )}
       </div>
+
+      {/* Inspection & Defect Timeline */}
+      <TimelineViewer
+        buildingId={building.id}
+        canResolve={isAuthenticated}
+        currentUserName="إدارة الإسكان"
+      />
 
       {/* Full Photo Modal */}
       {activePhotoModal && (

@@ -58,6 +58,53 @@ export interface FixtureEvaluation {
   updatedAt: string;
 }
 
+export type BuildingStatus = 'uninspected' | 'good' | 'warning' | 'critical';
+
+export interface EvaluationHistoryEntry {
+  id: string; // unique scan ID e.g. scan_${Date.now()}_${random}
+  fixtureId: string;
+  buildingId: string;
+  floor: number;
+  wingId: number; // Tower 1..4
+  categoryCode: string;
+  fixtureTypeCode: string;
+  fixtureNameAr: string;
+  status: FixtureStatus;
+  previousStatus?: FixtureStatus;
+  defects: string[];
+  notes?: string;
+  rating: number;
+  photoBase64?: string;
+  inspectorName?: string;
+  timestamp: string; // ISO string
+  isResolved?: boolean;
+  resolutionNotes?: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
+}
+
+export interface BuildingStructure {
+  buildingId: string;
+  floorsCount: number;
+  // floorNumber (1..floorsCount) -> array of active tower numbers (e.g. [1, 2, 3, 4] or for 5th floor [1, 2])
+  floorTowers: Record<number, number[]>;
+  updatedAt?: string;
+}
+
+export interface CampusMapConfig {
+  groundImageUrl?: string;
+  groundScale?: number;
+  buildingPositions: Record<
+    string,
+    {
+      x: number;
+      z: number;
+      rotation?: number;
+    }
+  >;
+  updatedAt?: string;
+}
+
 export interface WingSummary {
   wingId: number;
   wingNameAr: string;
@@ -79,8 +126,10 @@ export interface BuildingInfo {
   floorsCount: number;
   wingsCount: number;
   leaderName?: string;
-  healthScore: number;
+  healthScore?: number | null; // null or undefined when uninspected
+  status?: BuildingStatus;
   lastInspectionDate?: string;
+  structure?: BuildingStructure;
   stats: {
     totalEvaluations: number;
     criticalIssues: number;
@@ -93,6 +142,7 @@ export interface BuildingInfo {
 export interface CampusStats {
   totalBuildings: number;
   auditedBuildings: number;
+  uninspectedBuildings: number;
   totalFixturesCount: number;
   totalLeaksCount: number;
   totalCriticalToilets: number;

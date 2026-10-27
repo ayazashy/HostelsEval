@@ -17,12 +17,16 @@ import { WING_NAMES_AR } from '../../config/buildings';
 import { FixtureCard } from './FixtureCard';
 import { calculateWingHealth, getScoreColor } from '../../utils/healthScore';
 import { saveEvaluation } from '../../services/firestoreService';
+import { getBuildingStructure } from '../../utils/buildingStructureStore';
+import { TimelineViewer } from '../Timeline/TimelineViewer';
 import {
   ShieldCheck,
   CheckCheck,
   Filter,
   Layers,
   Lock,
+  Clock,
+  ClipboardList,
 } from 'lucide-react';
 
 interface LeaderPortalProps {
@@ -48,12 +52,32 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
 }) => {
   const currentBuilding = buildings.find((b) => b.id === activeBuildingId) || buildings[0];
 
+  const [portalTab, setPortalTab] = useState<'form' | 'timeline'>('form');
   const [selectedFloor, setSelectedFloor] = useState<number>(1);
   const [selectedWing, setSelectedWing] = useState<number>(1);
   const [selectedCategoryCode, setSelectedCategoryCode] = useState<string>('BTH');
   const [filterStatus, setFilterStatus] = useState<'all' | 'issues'>('all');
   const [categories, setCategories] = useState(() => loadActiveFacilityCategories());
   const [cloudStatus, setCloudStatus] = useState<{ synced: boolean; warning?: string } | null>(null);
+
+  // Dynamic Structure for Current Building
+  const structure = getBuildingStructure(currentBuilding.id);
+  const floorsCount = structure.floorsCount || currentBuilding.floorsCount || 5;
+  const activeTowers = structure.floorTowers[selectedFloor] || [1, 2, 3, 4];
+
+  // Adjust selected floor if exceeding custom floors count
+  React.useEffect(() => {
+    if (selectedFloor > floorsCount) {
+      setSelectedFloor(1);
+    }
+  }, [floorsCount, selectedFloor]);
+
+  // Adjust selected wing if not present in the current floor's active towers
+  React.useEffect(() => {
+    if (activeTowers.length > 0 && !activeTowers.includes(selectedWing)) {
+      setSelectedWing(activeTowers[0]);
+    }
+  }, [activeTowers, selectedWing]);
 
   React.useEffect(() => {
     const handleUpdate = () => {
@@ -196,6 +220,33 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
         </div>
       </div>
 
+      {/* Mode Switcher: Form vs Timeline */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setPortalTab('form')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shadow-sm ${
+            portalTab === 'form'
+              ? 'bg-blue-600 text-white'
+              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+          }`}
+        >
+          <ClipboardList className="w-4 h-4" />
+          <span>استمارة تسجيل الفحص</span>
+        </button>
+
+        <button
+          onClick={() => setPortalTab('timeline')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shadow-sm ${
+            portalTab === 'timeline'
+              ? 'bg-blue-600 text-white'
+              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+          }`}
+        >
+          <Clock className="w-4 h-4" />
+          <span>السجل الزمني ومتابعة الإصلاحات (Timeline)</span>
+        </button>
+      </div>
+
       {/* Read-Only Public Visitor Banner */}
       {isReadOnly && (
         <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-amber-900 shadow-sm">
@@ -220,87 +271,96 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
         </div>
       )}
 
-      {/* Sector Navigation: Category + Floor + Wing */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col gap-4">
-        {/* Category Tabs */}
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <span className="text-xs font-bold text-slate-600 flex items-center gap-1">
-            <Layers className="w-3.5 h-3.5" />
-            المرفق المطلوب فحصه:
-          </span>
-          <div className="flex gap-2">
-            {categories.map((cat) => (
-              <button
-                key={cat.code}
-                onClick={() => setSelectedCategoryCode(cat.code)}
-                className={`text-xs px-3 py-1.5 rounded-xl font-bold transition ${
-                  selectedCategoryCode === cat.code
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                <span>{cat.nameAr}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Floor Selector */}
-        <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1">
-          <span className="text-xs font-bold text-slate-600 shrink-0">الدور:</span>
-          <div className="flex gap-1.5 flex-1 justify-end">
-            {Array.from({ length: currentBuilding.floorsCount }, (_, i) => i + 1).map((floorNum) => (
-              <button
-                key={floorNum}
-                onClick={() => setSelectedFloor(floorNum)}
-                className={`py-1.5 px-3.5 rounded-xl text-xs font-bold transition ${
-                  selectedFloor === floorNum
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                الدور {floorNum}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Wing Selector */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {[1, 2, 3, 4].map((wId) => {
-            const isSelected = selectedWing === wId;
-            return (
-              <button
-                key={wId}
-                onClick={() => setSelectedWing(wId)}
-                className={`p-3 rounded-xl border text-right transition flex flex-col gap-1 ${
-                  isSelected
-                    ? 'bg-blue-50 border-blue-500 text-slate-900 shadow-sm'
-                    : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-slate-300'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-bold text-slate-900">
-                    جناح {wId}
-                  </span>
-                  <span
-                    className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
-                      isSelected
+      {portalTab === 'timeline' ? (
+        <TimelineViewer
+          buildingId={currentBuilding.id}
+          canResolve={!isReadOnly}
+          currentUserName={inspectorName}
+          onRefresh={onRefreshEvaluations}
+        />
+      ) : (
+        <>
+          {/* Sector Navigation: Category + Floor + Wing */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col gap-4">
+            {/* Category Tabs */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <span className="text-xs font-bold text-slate-600 flex items-center gap-1">
+                <Layers className="w-3.5 h-3.5" />
+                المرفق المطلوب فحصه:
+              </span>
+              <div className="flex gap-2">
+                {categories.map((cat) => (
+                  <button
+                    key={cat.code}
+                    onClick={() => setSelectedCategoryCode(cat.code)}
+                    className={`text-xs px-3 py-1.5 rounded-xl font-bold transition ${
+                      selectedCategoryCode === cat.code
                         ? 'bg-blue-600 text-white'
-                        : 'bg-slate-200 text-slate-600'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                     }`}
                   >
-                    W{wId}
-                  </span>
-                </div>
-                <span className="text-[10px] text-blue-700 font-medium">
-                  {wId <= 2 ? '3 مراحيض • 3 مراوش • 3 مغاسل • 1 سخان' : 'مرحاضين • مروشين • مغسلتين • سخانين'}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+                    <span>{cat.nameAr}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Floor Selector */}
+            <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1">
+              <span className="text-xs font-bold text-slate-600 shrink-0">الدور:</span>
+              <div className="flex gap-1.5 flex-1 justify-end">
+                {Array.from({ length: floorsCount }, (_, i) => i + 1).map((floorNum) => (
+                  <button
+                    key={floorNum}
+                    onClick={() => setSelectedFloor(floorNum)}
+                    className={`py-1.5 px-3.5 rounded-xl text-xs font-bold transition ${
+                      selectedFloor === floorNum
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    الدور {floorNum}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Wing / Tower Selector */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {activeTowers.map((wId) => {
+                const isSelected = selectedWing === wId;
+                return (
+                  <button
+                    key={wId}
+                    onClick={() => setSelectedWing(wId)}
+                    className={`p-3 rounded-xl border text-right transition flex flex-col gap-1 ${
+                      isSelected
+                        ? 'bg-blue-50 border-blue-500 text-slate-900 shadow-sm'
+                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-bold text-slate-900">
+                        جناح {wId}
+                      </span>
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
+                          isSelected
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-slate-200 text-slate-600'
+                        }`}
+                      >
+                        W{wId}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-blue-700 font-medium">
+                      {wId <= 2 ? '3 مراحيض • 3 مراوش • 3 مغاسل • 1 سخان' : 'مرحاضين • مروشين • مغسلتين • سخانين'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
       {/* Sector Progress */}
       <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
@@ -424,8 +484,10 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
             }
             return slots;
           })}
+          </div>
         </div>
-      </div>
-    </div>
-  );
+      </>
+    )}
+  </div>
+);
 };

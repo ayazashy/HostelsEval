@@ -7,6 +7,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { BuildingInfo, FixtureEvaluation } from '../../types/hostel';
 import { getScoreColor } from '../../utils/healthScore';
+import { getCampusMapConfig } from '../../utils/buildingStructureStore';
 import {
   RotateCw,
   Eye,
@@ -32,14 +33,14 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
   const mountRef = useRef<HTMLDivElement>(null);
   const [hoveredBuilding, setHoveredBuilding] = useState<{
     building: BuildingInfo;
-    health: number;
+    health: number | null | undefined;
     leaks: number;
     broken: number;
     x: number;
     y: number;
   } | null>(null);
 
-  const [filterMode, setFilterMode] = useState<'all' | 'critical' | 'leaks' | 'healthy'>('all');
+  const [filterMode, setFilterMode] = useState<'all' | 'critical' | 'leaks' | 'healthy' | 'uninspected'>('all');
   const [autoRotate, setAutoRotate] = useState<boolean>(true);
   const [selectedJumpId, setSelectedJumpId] = useState<string>('');
 
@@ -110,25 +111,45 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
     scene.add(sunLight);
 
     // 5. Campus Ground Grid & Campus Avenues
-    const gridHelper = new THREE.GridHelper(180, 36, 0x94a3b8, 0x0cbd5e1);
+    const gridHelper = new THREE.GridHelper(240, 48, 0x94a3b8, 0xcbd5e1);
     gridHelper.position.y = -0.05;
     scene.add(gridHelper);
 
-    // Campus Base Ground Plane
-    const groundGeo = new THREE.PlaneGeometry(200, 200);
+    const mapConfig = getCampusMapConfig();
+
+    // Campus Base Ground Plane (supports Google Map / Satellite ground background)
+    const groundGeo = new THREE.PlaneGeometry(240, 240);
     const groundMat = new THREE.MeshStandardMaterial({
-      color: 0xe2e8f0,
+      color: mapConfig.groundImageUrl ? 0xffffff : 0xe2e8f0,
       roughness: 0.9,
       metalness: 0.05,
     });
+
+    if (mapConfig.groundImageUrl) {
+      const loader = new THREE.TextureLoader();
+      loader.load(
+        mapConfig.groundImageUrl,
+        (tex) => {
+          tex.wrapS = THREE.ClampToEdgeWrapping;
+          tex.wrapT = THREE.ClampToEdgeWrapping;
+          groundMat.map = tex;
+          groundMat.needsUpdate = true;
+        },
+        undefined,
+        (err) => {
+          console.warn('[Campus3DViewer] Could not load satellite background texture:', err);
+        }
+      );
+    }
+
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.1;
     ground.receiveShadow = true;
     scene.add(ground);
 
-    // 6. Generate 34 Hostel Buildings in a Structured Campus Masterplan Layout
-    // 6 columns x 6 rows (with 34 slots, 14 units spacing)
+    // 6. Generate 34 Hostel Buildings in Campus Masterplan Layout
+    // Support real-world layout positions from mapConfig, falling back to structured grid
     const cols = 6;
     const spacingX = 17;
     const spacingZ = 17;
@@ -149,11 +170,15 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
       const col = idx % cols;
       const row = Math.floor(idx / cols);
 
-      const posX = col * spacingX - offsetX;
-      const posZ = row * spacingZ - offsetZ;
+      const defaultX = col * spacingX - offsetX;
+      const defaultZ = row * spacingZ - offsetZ;
+
+      const customPos = mapConfig.buildingPositions[building.id];
+      const posX = customPos?.x !== undefined ? customPos.x : defaultX;
+      const posZ = customPos?.z !== undefined ? customPos.z : defaultZ;
 
       const bEvals = allEvaluations.filter((e) => e.buildingId === building.id);
-      const health = building.healthScore !== undefined ? building.healthScore : 100;
+      const health = building.healthScore;
       const colorDef = getScoreColor(health);
       const leaksCount = bEvals.filter((e) => e.defects.includes('leak')).length;
       const brokenCount = bEvals.filter((e) => e.status === 'broken').length;
@@ -453,11 +478,13 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
 
       let isMatch = true;
       if (filterMode === 'critical') {
-        isMatch = data.health < 50;
+        isMatch = data.health !== null && data.health !== undefined && data.health < 50;
       } else if (filterMode === 'leaks') {
         isMatch = data.leaksCount > 0;
       } else if (filterMode === 'healthy') {
-        isMatch = data.health >= 80;
+        isMatch = data.health !== null && data.health !== undefined && data.health >= 80;
+      } else if (filterMode === 'uninspected') {
+        isMatch = data.health === null || data.health === undefined;
       }
 
       group.visible = isMatch;
@@ -588,6 +615,16 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
           الكل (34)
         </button>
         <button
+          onClick={() => setFilterMode('uninspected')}
+          className={`px-2.5 py-1 rounded-xl font-bold transition flex items-center gap-1 ${
+            filterMode === 'uninspected'
+              ? 'bg-slate-600 text-white'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <span>⚪ غير مفحوص</span>
+        </button>
+        <button
           onClick={() => setFilterMode('critical')}
           className={`px-2.5 py-1 rounded-xl font-bold transition flex items-center gap-1 ${
             filterMode === 'critical'
@@ -642,12 +679,14 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
             </div>
 
             <div className="flex justify-between items-center text-xs mb-1.5">
-              <span className="text-slate-600">نسبة سلامة المرافق:</span>
+              <span className="text-slate-600">حالة المبنى / السلامة:</span>
               <span
                 className="font-bold text-sm font-mono"
                 style={{ color: getScoreColor(hoveredBuilding.health).hex }}
               >
-                %{hoveredBuilding.health}
+                {hoveredBuilding.health !== undefined && hoveredBuilding.health !== null
+                  ? `%${hoveredBuilding.health}`
+                  : 'غير مفحوص'}
               </span>
             </div>
 
@@ -674,6 +713,10 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
       {/* Bottom Legend & Guidance */}
       <div className="absolute bottom-3 right-4 left-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 pointer-events-none text-xs">
         <div className="bg-white/95 backdrop-blur-sm px-3.5 py-1.5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4 pointer-events-auto">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-slate-400" />
+            <span className="text-slate-700 font-medium">غير مفحوص</span>
+          </div>
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-600" />
             <span className="text-slate-700 font-medium">سليم (80-100%)</span>

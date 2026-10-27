@@ -17,7 +17,8 @@ export const DEFAULT_BUILDINGS: BuildingInfo[] = Array.from({ length: TOTAL_CAMP
     floorsCount: 5, // Default 5 floors
     wingsCount: 4,  // Always 4 wings connected in the center
     leaderName: `رائد مبنى ${num}`,
-    healthScore: 100, // Starts at 100 until evaluations are recorded
+    healthScore: undefined, // Grey uninspected until first evaluation is recorded
+    status: 'uninspected',
     stats: {
       totalEvaluations: 0,
       criticalIssues: 0,
@@ -27,6 +28,8 @@ export const DEFAULT_BUILDINGS: BuildingInfo[] = Array.from({ length: TOTAL_CAMP
     },
   };
 });
+
+export const BUILDINGS_CONFIG = DEFAULT_BUILDINGS;
 
 // Helper to retrieve building by id
 export const getBuildingById = (id: string): BuildingInfo | undefined => {
