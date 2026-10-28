@@ -41,7 +41,11 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
   } | null>(null);
 
   const [activeFloorFilter, setActiveFloorFilter] = useState<number | 'all'>('all');
-  const [autoRotate, setAutoRotate] = useState<boolean>(true);
+  const [autoRotate, setAutoRotate] = useState<boolean>(false);
+  const autoRotateRef = useRef<boolean>(autoRotate);
+  useEffect(() => {
+    autoRotateRef.current = autoRotate;
+  }, [autoRotate]);
 
   const [structureVersion, setStructureVersion] = useState<number>(0);
 
@@ -207,35 +211,30 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
         mesh.add(wireframe);
       }
 
-      // 3D Floating Wing Label strictly labeled by number 1 to 4
+      // 3D Floating Wing Label strictly labeled by bold number 1 to 4
       const labelCanvas = document.createElement('canvas');
-      labelCanvas.width = 256;
-      labelCanvas.height = 100;
+      labelCanvas.width = 160;
+      labelCanvas.height = 160;
       const lCtx = labelCanvas.getContext('2d');
       if (lCtx) {
+        lCtx.beginPath();
+        lCtx.arc(80, 80, 70, 0, Math.PI * 2);
         lCtx.fillStyle = '#ffffff';
-        if (typeof lCtx.roundRect === 'function') {
-          lCtx.beginPath();
-          lCtx.roundRect(10, 10, 236, 80, 16);
-          lCtx.fill();
-        } else {
-          lCtx.beginPath();
-          lCtx.rect(10, 10, 236, 80);
-          lCtx.fill();
-        }
+        lCtx.fill();
+        lCtx.lineWidth = 10;
         lCtx.strokeStyle = '#2563eb';
-        lCtx.lineWidth = 6;
         lCtx.stroke();
-        lCtx.font = 'bold 44px "Cairo", sans-serif';
+        lCtx.font = '900 86px "Cairo", system-ui, sans-serif';
         lCtx.fillStyle = '#1e3a8a';
         lCtx.textAlign = 'center';
         lCtx.textBaseline = 'middle';
-        lCtx.fillText(`جناح ${w}`, 128, 50);
+        lCtx.fillText(String(w), 80, 80);
 
         const labelTex = new THREE.CanvasTexture(labelCanvas);
-        const spriteMat = new THREE.SpriteMaterial({ map: labelTex });
+        labelTex.minFilter = THREE.LinearFilter;
+        const spriteMat = new THREE.SpriteMaterial({ map: labelTex, depthTest: false });
         const sprite = new THREE.Sprite(spriteMat);
-        sprite.scale.set(3.4, 1.35, 1);
+        sprite.scale.set(2.4, 2.4, 1);
         const labelDist = distFromCenter + wingLength / 2 + 1.2;
         sprite.position.set(labelDist * cosA, 1.2, labelDist * sinA);
         scene.add(sprite);
@@ -258,6 +257,9 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
 
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
+
+    const domElement = renderer.domElement;
+    domElement.style.touchAction = 'none';
 
     const onMouseDown = (e: MouseEvent) => {
       isDragging = true;
@@ -327,16 +329,110 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
       }
     };
 
-    const domElement = renderer.domElement;
+    // Touch Event Handlers for Mobile Phones & Tablets
+    let touchStartDist = 0;
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let touchStartTime = 0;
+    let isTouchDragging = false;
+    let touchMoved = false;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        const t = e.touches[0];
+        isDragging = true;
+        isTouchDragging = true;
+        touchMoved = false;
+        touchStartX = t.clientX;
+        touchStartY = t.clientY;
+        prevMouseX = t.clientX;
+        prevMouseY = t.clientY;
+        touchStartTime = Date.now();
+      } else if (e.touches.length === 2) {
+        isDragging = false;
+        isTouchDragging = false;
+        touchMoved = true;
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        touchStartDist = Math.hypot(dx, dy);
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 1 && isTouchDragging) {
+        const t = e.touches[0];
+        const deltaX = t.clientX - prevMouseX;
+        const deltaY = t.clientY - prevMouseY;
+        if (Math.abs(t.clientX - touchStartX) > 6 || Math.abs(t.clientY - touchStartY) > 6) {
+          touchMoved = true;
+        }
+        prevMouseX = t.clientX;
+        prevMouseY = t.clientY;
+
+        spherical.theta -= deltaX * 0.007;
+        spherical.phi = Math.max(0.15, Math.min(Math.PI / 2.1, spherical.phi - deltaY * 0.007));
+        updateCameraPosition();
+      } else if (e.touches.length === 2) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const currentDist = Math.hypot(dx, dy);
+        if (touchStartDist > 0) {
+          const pinchDelta = touchStartDist - currentDist;
+          spherical.radius = Math.max(
+            18,
+            Math.min(65, spherical.radius + pinchDelta * 0.15)
+          );
+          updateCameraPosition();
+        }
+        touchStartDist = currentDist;
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length === 0) {
+        isDragging = false;
+        isTouchDragging = false;
+
+        const duration = Date.now() - touchStartTime;
+        if (!touchMoved && duration < 350) {
+          const rect = renderer.domElement.getBoundingClientRect();
+          mouse.x = ((touchStartX - rect.left) / rect.width) * 2 - 1;
+          mouse.y = -((touchStartY - rect.top) / rect.height) * 2 + 1;
+
+          raycaster.setFromCamera(mouse, camera);
+          const meshes = Array.from(meshesMapRef.current.values());
+          const intersects = raycaster.intersectObjects(meshes);
+
+          if (intersects.length > 0) {
+            const topMesh = intersects[0].object as THREE.Mesh;
+            const data = topMesh.userData;
+            if (data && data.wingId && data.floor) {
+              onSelectSector(data.wingId, data.floor);
+            }
+          }
+        }
+      } else if (e.touches.length === 1) {
+        const t = e.touches[0];
+        prevMouseX = t.clientX;
+        prevMouseY = t.clientY;
+        touchStartDist = 0;
+      }
+    };
+
     domElement.addEventListener('mousedown', onMouseDown);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     domElement.addEventListener('click', onClick);
 
+    domElement.addEventListener('touchstart', onTouchStart, { passive: false });
+    domElement.addEventListener('touchmove', onTouchMove, { passive: false });
+    domElement.addEventListener('touchend', onTouchEnd, { passive: false });
+    domElement.addEventListener('touchcancel', onTouchEnd, { passive: false });
+
     // 8. Animation Loop
     const animate = () => {
-      if (autoRotate && !isDragging) {
-        spherical.theta += 0.002;
+      if (autoRotateRef.current && !isDragging) {
+        spherical.theta += 0.0018;
         updateCameraPosition();
       }
       renderer.render(scene, camera);
@@ -362,9 +458,13 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
       domElement.removeEventListener('click', onClick);
+      domElement.removeEventListener('touchstart', onTouchStart);
+      domElement.removeEventListener('touchmove', onTouchMove);
+      domElement.removeEventListener('touchend', onTouchEnd);
+      domElement.removeEventListener('touchcancel', onTouchEnd);
       renderer.dispose();
     };
-  }, [buildingId, effectiveFloorsCount, evaluations, selectedWing, selectedFloor, autoRotate, structureVersion]);
+  }, [buildingId, effectiveFloorsCount, evaluations, selectedWing, selectedFloor, structureVersion]);
 
   useEffect(() => {
     meshesMapRef.current.forEach((mesh) => {
@@ -384,9 +484,9 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
 
       {/* Top Floating Controls */}
       <div className="absolute top-4 right-4 left-4 flex justify-between items-center pointer-events-none">
-        <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm pointer-events-auto flex items-center gap-2">
+        <div className="bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm pointer-events-auto flex items-center gap-2">
           <span className="text-xs font-bold text-slate-800">
-            المجسم المعماري • {buildingId} ({effectiveFloorsCount} أدوار)
+            {buildingId} • {effectiveFloorsCount} أدوار
           </span>
         </div>
 

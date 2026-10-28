@@ -78,7 +78,7 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              مجمع سكني مكون من 4 أجنحة متصلة بمركز وسطي • {building.floorsCount} أدوار
+              4 أجنحة • {building.floorsCount} أدوار
             </p>
           </div>
         </div>
@@ -117,10 +117,10 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between px-1">
           <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-            <span>المجسم المعماري للأجنحة الـ 4:</span>
+            <span>مجسم المبنى (3D)</span>
           </h2>
           <span className="text-xs text-slate-500">
-            اضغط على أي جناح داخل المجسم لتفقد حالته
+            انقر على أي جناح لمعاينته
           </span>
         </div>
 
@@ -138,7 +138,7 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
       <div className="flex flex-col gap-3">
         <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
           <Layers className="w-4 h-4 text-slate-600" />
-          <span>حالة أجنحة المبنى:</span>
+          <span>الأجنحة:</span>
         </h3>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

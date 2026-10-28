@@ -93,9 +93,11 @@ export interface BuildingStructure {
 
 export interface CampusMapConfig {
   groundImageUrl?: string;
-  groundScale?: number; // scale percentage (e.g. 50 to 250, default 100)
+  groundScale?: number; // scale percentage (e.g. 20 to 200, default 75)
   groundOffsetX?: number; // offset X in units (e.g. -50 to 50, default 0)
   groundOffsetZ?: number; // offset Z in units (e.g. -50 to 50, default 0)
+  groundRotation?: number; // optional rotation in degrees (0, 90, 180, 270)
+  groundOpacity?: number; // optional opacity percentage (30 to 100)
   buildingPositions: Record<
     string,
     {

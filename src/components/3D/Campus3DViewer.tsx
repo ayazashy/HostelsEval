@@ -112,7 +112,7 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
   } | null>(null);
 
   const [filterMode, setFilterMode] = useState<'all' | 'critical' | 'leaks' | 'healthy' | 'uninspected'>('all');
-  const [autoRotate, setAutoRotate] = useState<boolean>(true);
+  const [autoRotate, setAutoRotate] = useState<boolean>(false);
   const [selectedJumpId, setSelectedJumpId] = useState<string>('');
   const [mapVersion, setMapVersion] = useState<number>(0);
 
@@ -262,7 +262,8 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
 
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.rotation.x = -Math.PI / 2;
-    const scaleFactor = (mapConfig.groundScale || 100) / 100;
+    ground.rotation.z = ((mapConfig.groundRotation || 0) * Math.PI) / 180;
+    const scaleFactor = (mapConfig.groundScale !== undefined ? mapConfig.groundScale : 75) / 100;
     ground.scale.set(scaleFactor, scaleFactor, 1);
     ground.position.set(mapConfig.groundOffsetX || 0, 0, mapConfig.groundOffsetZ || 0);
     ground.receiveShadow = true;
@@ -390,37 +391,59 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
       // Floating 3D Building Number & Health Badge Sprite
       const spriteCanvas = document.createElement('canvas');
       spriteCanvas.width = 256;
-      spriteCanvas.height = 110;
+      spriteCanvas.height = 256;
       const sCtx = spriteCanvas.getContext('2d');
       if (sCtx) {
-        // Rounded container with cross-browser safe drawRoundedRect
+        const centerX = 128;
+        const centerY = 128;
+        const radius = 104;
+
+        // Outer subtle drop shadow
+        sCtx.beginPath();
+        sCtx.arc(centerX, centerY + 4, radius + 4, 0, Math.PI * 2);
+        sCtx.fillStyle = 'rgba(15, 23, 42, 0.16)';
+        sCtx.fill();
+
+        // White circular background
+        sCtx.beginPath();
+        sCtx.arc(centerX, centerY, radius, 0, Math.PI * 2);
         sCtx.fillStyle = '#ffffff';
-        drawRoundedRect(sCtx, 8, 8, 240, 94, 20);
         sCtx.fill();
 
         // Border colored by health status
+        sCtx.lineWidth = 14;
         sCtx.strokeStyle = colorDef.hex;
-        sCtx.lineWidth = 6;
         sCtx.stroke();
 
-        // Title: مبنى X
-        sCtx.font = 'bold 36px "Cairo", sans-serif';
+        // LARGE BOLD NUMBER - no "مبنى"
+        sCtx.font = '900 114px "Cairo", system-ui, -apple-system, sans-serif';
         sCtx.fillStyle = '#0f172a';
         sCtx.textAlign = 'center';
         sCtx.textBaseline = 'middle';
-        sCtx.fillText(`مبنى ${building.number}`, 128, 42);
+        const numY = leaksCount > 0 || health !== null ? centerY - 14 : centerY;
+        sCtx.fillText(String(building.number), centerX, numY);
 
-        // Subtitle: %Health or Water Leaks
-        sCtx.font = 'bold 24px "Cairo", sans-serif';
-        sCtx.fillStyle = leaksCount > 0 ? '#dc2626' : colorDef.hex;
-        const subText = leaksCount > 0 ? `💧 ${leaksCount} تسريب` : `%${health} سلامة`;
-        sCtx.fillText(subText, 128, 78);
+        // Subtitle indicator (Leaks or Health)
+        if (leaksCount > 0) {
+          sCtx.beginPath();
+          sCtx.arc(centerX, centerY + 62, 22, 0, Math.PI * 2);
+          sCtx.fillStyle = '#dc2626';
+          sCtx.fill();
+          sCtx.font = 'bold 22px "Cairo", sans-serif';
+          sCtx.fillStyle = '#ffffff';
+          sCtx.fillText('💧', centerX, centerY + 64);
+        } else if (health !== null && health !== undefined) {
+          sCtx.font = 'bold 26px "Cairo", sans-serif';
+          sCtx.fillStyle = colorDef.hex;
+          sCtx.fillText(`%${health}`, centerX, centerY + 62);
+        }
 
         const spriteTex = new THREE.CanvasTexture(spriteCanvas);
+        spriteTex.minFilter = THREE.LinearFilter;
         const spriteMat = new THREE.SpriteMaterial({ map: spriteTex, depthTest: false });
         const sprite = new THREE.Sprite(spriteMat);
-        sprite.scale.set(6.2, 2.7, 1);
-        sprite.position.y = totalHeight + 2.8;
+        sprite.scale.set(5.2, 5.2, 1);
+        sprite.position.y = totalHeight + 3.2;
         buildingGroup.add(sprite);
       }
 
@@ -441,6 +464,9 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
     let hoveredMesh: THREE.Group | null = null;
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
+
+    const domElement = renderer.domElement;
+    domElement.style.touchAction = 'none';
 
     const onMouseDown = (e: MouseEvent) => {
       isDraggingRef.current = true;
@@ -541,12 +567,105 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
       updateCamera();
     };
 
-    const domElement = renderer.domElement;
+    // Touch Event Handlers for Mobile Phones & Tablets
+    let touchStartDist = 0;
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let touchStartTime = 0;
+    let isTouchDragging = false;
+    let touchMoved = false;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        const t = e.touches[0];
+        isDraggingRef.current = true;
+        isTouchDragging = true;
+        touchMoved = false;
+        touchStartX = t.clientX;
+        touchStartY = t.clientY;
+        prevMouseRef.current = { x: t.clientX, y: t.clientY };
+        touchStartTime = Date.now();
+      } else if (e.touches.length === 2) {
+        isDraggingRef.current = false;
+        isTouchDragging = false;
+        touchMoved = true;
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        touchStartDist = Math.hypot(dx, dy);
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 1 && isTouchDragging) {
+        const t = e.touches[0];
+        const deltaX = t.clientX - prevMouseRef.current.x;
+        const deltaY = t.clientY - prevMouseRef.current.y;
+        if (Math.abs(t.clientX - touchStartX) > 6 || Math.abs(t.clientY - touchStartY) > 6) {
+          touchMoved = true;
+        }
+        prevMouseRef.current = { x: t.clientX, y: t.clientY };
+
+        sphericalRef.current.theta -= deltaX * 0.007;
+        sphericalRef.current.phi = Math.max(
+          0.15,
+          Math.min(Math.PI / 2.15, sphericalRef.current.phi - deltaY * 0.007)
+        );
+        updateCamera();
+      } else if (e.touches.length === 2) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const currentDist = Math.hypot(dx, dy);
+        if (touchStartDist > 0) {
+          const pinchDelta = touchStartDist - currentDist;
+          sphericalRef.current.radius = Math.max(
+            35,
+            Math.min(160, sphericalRef.current.radius + pinchDelta * 0.25)
+          );
+          updateCamera();
+        }
+        touchStartDist = currentDist;
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length === 0) {
+        isDraggingRef.current = false;
+        isTouchDragging = false;
+
+        // Quick Tap Detection (< 350ms, < 10px move)
+        const duration = Date.now() - touchStartTime;
+        if (!touchMoved && duration < 350) {
+          const rect = renderer.domElement.getBoundingClientRect();
+          mouse.x = ((touchStartX - rect.left) / rect.width) * 2 - 1;
+          mouse.y = -((touchStartY - rect.top) / rect.height) * 2 + 1;
+
+          raycaster.setFromCamera(mouse, camera);
+          const groups = Array.from(buildingsMapRef.current.values());
+          for (const group of groups) {
+            const hits = raycaster.intersectObjects(group.children, false);
+            if (hits.length > 0 && group.userData?.buildingId) {
+              onSelectBuilding(group.userData.buildingId);
+              return;
+            }
+          }
+        }
+      } else if (e.touches.length === 1) {
+        const t = e.touches[0];
+        prevMouseRef.current = { x: t.clientX, y: t.clientY };
+        touchStartDist = 0;
+      }
+    };
+
     domElement.addEventListener('mousedown', onMouseDown);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     domElement.addEventListener('click', onClick);
     domElement.addEventListener('wheel', onWheel, { passive: false });
+
+    domElement.addEventListener('touchstart', onTouchStart, { passive: false });
+    domElement.addEventListener('touchmove', onTouchMove, { passive: false });
+    domElement.addEventListener('touchend', onTouchEnd, { passive: false });
+    domElement.addEventListener('touchcancel', onTouchEnd, { passive: false });
 
     // 8. Animation Loop
     let angleBeacon = 0;
@@ -590,6 +709,10 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
       window.removeEventListener('mouseup', onMouseUp);
       domElement.removeEventListener('click', onClick);
       domElement.removeEventListener('wheel', onWheel);
+      domElement.removeEventListener('touchstart', onTouchStart);
+      domElement.removeEventListener('touchmove', onTouchMove);
+      domElement.removeEventListener('touchend', onTouchEnd);
+      domElement.removeEventListener('touchcancel', onTouchEnd);
       renderer.dispose();
     };
   }, [buildings, allEvaluations]);
@@ -619,8 +742,9 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
 
     // B. Update Ground Image Texture, Scale & Offsets in real-time
     if (groundMeshRef.current) {
-      const scaleFactor = (mapConfig.groundScale || 100) / 100;
+      const scaleFactor = (mapConfig.groundScale !== undefined ? mapConfig.groundScale : 75) / 100;
       groundMeshRef.current.scale.set(scaleFactor, scaleFactor, 1);
+      groundMeshRef.current.rotation.z = ((mapConfig.groundRotation || 0) * Math.PI) / 180;
       groundMeshRef.current.position.set(
         mapConfig.groundOffsetX || 0,
         0,
@@ -695,28 +819,14 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
       {/* 3D Canvas Mount */}
       <div ref={mountRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
 
-      {/* Top Floating Controls */}
-      <div className="absolute top-4 right-4 left-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 pointer-events-none">
-        {/* Title & Badge */}
-        <div className="bg-white/95 backdrop-blur-sm px-3.5 py-2 rounded-2xl border border-slate-200 shadow-sm pointer-events-auto flex items-center gap-2.5">
-          <Building className="w-4 h-4 text-blue-600" />
-          <div>
-            <h3 className="text-xs font-bold text-slate-900 leading-none">
-              المجسم ثلاثي الأبعاد لمباني الإسكان الطلابي (34 مبنى)
-            </h3>
-            <span className="text-[10px] text-slate-500">
-              جامعة الملك سعود • مجمع الـ 34 مبنى (136 جناح)
-            </span>
-          </div>
-        </div>
-
-        {/* Right Floating Actions */}
-        <div className="flex items-center gap-2 pointer-events-auto flex-wrap">
-          {/* Quick Jump Selector */}
+      {/* Top Floating Action Controls */}
+      <div className="absolute top-3.5 right-3.5 left-3.5 flex justify-between items-center gap-2 pointer-events-none">
+        {/* Quick Jump Selector */}
+        <div className="pointer-events-auto">
           <select
             value={selectedJumpId}
             onChange={(e) => handleJumpToBuilding(e.target.value)}
-            className="bg-white/95 backdrop-blur-sm border border-slate-200 text-slate-800 text-xs rounded-xl px-2.5 py-1.5 font-bold shadow-sm cursor-pointer"
+            className="bg-white/95 backdrop-blur-md border border-slate-200 text-slate-800 text-xs rounded-xl px-3 py-1.5 font-bold shadow-sm cursor-pointer hover:border-blue-400 focus:outline-none"
           >
             <option value="">🎯 تركيز الكاميرا على مبنى...</option>
             {buildings.map((b) => (
@@ -725,99 +835,54 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
               </option>
             ))}
           </select>
+        </div>
 
-          {/* Zoom Buttons */}
-          <div className="bg-white/95 backdrop-blur-sm p-1 rounded-xl border border-slate-200 shadow-sm flex items-center gap-1">
+        {/* Right Floating Actions */}
+        <div className="flex items-center gap-1.5 pointer-events-auto">
+          {/* Zoom & Reset Buttons */}
+          <div className="bg-white/95 backdrop-blur-md p-1 rounded-xl border border-slate-200 shadow-sm flex items-center gap-1">
             <button
               onClick={() => handleZoom('in')}
-              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-600 hover:text-slate-900 transition"
+              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-700 transition"
               title="تكبير"
             >
-              <ZoomIn className="w-3.5 h-3.5" />
+              <ZoomIn className="w-4 h-4" />
             </button>
             <button
               onClick={() => handleZoom('out')}
-              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-600 hover:text-slate-900 transition"
+              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-700 transition"
               title="تصغير"
             >
-              <ZoomOut className="w-3.5 h-3.5" />
+              <ZoomOut className="w-4 h-4" />
             </button>
             <button
               onClick={handleResetCamera}
-              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-600 hover:text-slate-900 transition"
+              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-700 transition"
               title="إعادة ضبط الرؤية"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
+              <RefreshCw className="w-4 h-4" />
             </button>
           </div>
 
           {/* Auto Rotate Toggle */}
           <button
             onClick={() => setAutoRotate(!autoRotate)}
-            className={`p-2 rounded-xl border shadow-sm transition ${
+            className={`px-2.5 py-1.5 rounded-xl border shadow-sm transition flex items-center gap-1.5 text-xs font-bold ${
               autoRotate
                 ? 'bg-blue-600 border-blue-600 text-white'
-                : 'bg-white/95 border-slate-200 text-slate-600'
+                : 'bg-white/95 border-slate-200 text-slate-700 hover:bg-slate-50'
             }`}
             title="تبديل الدوران التلقائي للمجمع"
           >
-            <RotateCw className="w-3.5 h-3.5" />
+            <RotateCw className={`w-3.5 h-3.5 ${autoRotate ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">{autoRotate ? 'إيقاف الدوران' : 'دوران'}</span>
           </button>
         </div>
       </div>
 
-      {/* Floating Filter Chips over 3D Canvas */}
-      <div className="absolute top-18 sm:top-16 right-4 pointer-events-auto flex items-center gap-1.5 bg-white/90 backdrop-blur-sm p-1.5 rounded-2xl border border-slate-200 shadow-sm text-xs">
-        <button
-          onClick={() => setFilterMode('all')}
-          className={`px-2.5 py-1 rounded-xl font-bold transition ${
-            filterMode === 'all'
-              ? 'bg-slate-900 text-white'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          الكل (34)
-        </button>
-        <button
-          onClick={() => setFilterMode('uninspected')}
-          className={`px-2.5 py-1 rounded-xl font-bold transition flex items-center gap-1 ${
-            filterMode === 'uninspected'
-              ? 'bg-slate-600 text-white'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <span>⚪ غير مفحوص</span>
-        </button>
-        <button
-          onClick={() => setFilterMode('critical')}
-          className={`px-2.5 py-1 rounded-xl font-bold transition flex items-center gap-1 ${
-            filterMode === 'critical'
-              ? 'bg-rose-600 text-white'
-              : 'text-rose-700 hover:bg-rose-50'
-          }`}
-        >
-          <span>🚨 مباني حرجة</span>
-        </button>
-        <button
-          onClick={() => setFilterMode('leaks')}
-          className={`px-2.5 py-1 rounded-xl font-bold transition flex items-center gap-1 ${
-            filterMode === 'leaks'
-              ? 'bg-blue-600 text-white'
-              : 'text-blue-700 hover:bg-blue-50'
-          }`}
-        >
-          <span>💧 تسريبات مياه</span>
-        </button>
-        <button
-          onClick={() => setFilterMode('healthy')}
-          className={`px-2.5 py-1 rounded-xl font-bold transition flex items-center gap-1 ${
-            filterMode === 'healthy'
-              ? 'bg-emerald-600 text-white'
-              : 'text-emerald-700 hover:bg-emerald-50'
-          }`}
-        >
-          <span>✅ مباني سليمة</span>
-        </button>
+      {/* Subtle Mobile Gesture Hint */}
+      <div className="absolute bottom-2.5 right-3 pointer-events-none text-[10px] text-slate-400 font-medium bg-white/70 backdrop-blur-xs px-2 py-0.5 rounded-lg border border-slate-200/50 hidden sm:block">
+        اسحب للتدوير • بإصبعين للتكبير • انقر للمعاينة
       </div>
 
       {/* Interactive Hover Tooltip */}

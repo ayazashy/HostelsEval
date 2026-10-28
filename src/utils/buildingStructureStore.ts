@@ -319,9 +319,11 @@ export function getCampusMapConfig(): CampusMapConfig {
   if (inMemoryMapConfigCache) {
     return {
       ...inMemoryMapConfigCache,
-      groundScale: inMemoryMapConfigCache.groundScale !== undefined ? inMemoryMapConfigCache.groundScale : 100,
+      groundScale: inMemoryMapConfigCache.groundScale !== undefined ? inMemoryMapConfigCache.groundScale : 75,
       groundOffsetX: inMemoryMapConfigCache.groundOffsetX || 0,
       groundOffsetZ: inMemoryMapConfigCache.groundOffsetZ || 0,
+      groundRotation: inMemoryMapConfigCache.groundRotation || 0,
+      groundOpacity: inMemoryMapConfigCache.groundOpacity !== undefined ? inMemoryMapConfigCache.groundOpacity : 85,
       buildingPositions: {
         ...defaults,
         ...(inMemoryMapConfigCache.buildingPositions || {}),
@@ -336,9 +338,11 @@ export function getCampusMapConfig(): CampusMapConfig {
       const parsed: CampusMapConfig = JSON.parse(raw);
       const combined: CampusMapConfig = {
         ...parsed,
-        groundScale: parsed.groundScale !== undefined ? parsed.groundScale : 100,
+        groundScale: parsed.groundScale !== undefined ? parsed.groundScale : 75,
         groundOffsetX: parsed.groundOffsetX || 0,
         groundOffsetZ: parsed.groundOffsetZ || 0,
+        groundRotation: parsed.groundRotation || 0,
+        groundOpacity: parsed.groundOpacity !== undefined ? parsed.groundOpacity : 85,
         buildingPositions: {
           ...defaults,
           ...(parsed.buildingPositions || {}),
@@ -353,9 +357,11 @@ export function getCampusMapConfig(): CampusMapConfig {
 
   const defConfig: CampusMapConfig = {
     buildingPositions: defaults,
-    groundScale: 100,
+    groundScale: 75,
     groundOffsetX: 0,
     groundOffsetZ: 0,
+    groundRotation: 0,
+    groundOpacity: 85,
     updatedAt: new Date().toISOString(),
   };
   inMemoryMapConfigCache = defConfig;
@@ -462,9 +468,11 @@ export function saveCampusMapConfig(config: CampusMapConfig, pushToCloud: boolea
   try {
     const payload: CampusMapConfig = {
       ...config,
-      groundScale: config.groundScale !== undefined ? config.groundScale : 100,
+      groundScale: config.groundScale !== undefined ? config.groundScale : 75,
       groundOffsetX: config.groundOffsetX || 0,
       groundOffsetZ: config.groundOffsetZ || 0,
+      groundRotation: config.groundRotation || 0,
+      groundOpacity: config.groundOpacity !== undefined ? config.groundOpacity : 85,
       updatedAt: new Date().toISOString(),
     };
 
