@@ -84,7 +84,17 @@ export function App() {
   useEffect(() => {
     loadAllEvaluations();
 
-    const handleResetEvent = () => {
+    const handleResetEvent = (e: any) => {
+      const bId = e?.detail?.buildingId;
+      if (bId) {
+        setAllEvaluations((prev) => {
+          const filtered = prev.filter(
+            (item) => item?.buildingId && item.buildingId.toUpperCase() !== bId.toUpperCase()
+          );
+          updateBuildingsStats(filtered);
+          return filtered;
+        });
+      }
       loadAllEvaluations();
     };
 
@@ -96,8 +106,9 @@ export function App() {
 
   const loadAllEvaluations = async () => {
     const evals = await fetchAllEvaluations();
-    setAllEvaluations(evals);
-    updateBuildingsStats(evals);
+    const cleanEvals = evals.filter((e) => !e.isDeleted);
+    setAllEvaluations(cleanEvals);
+    updateBuildingsStats(cleanEvals);
   };
 
   useEffect(() => {
@@ -106,8 +117,8 @@ export function App() {
       selectedBuildingId,
       (buildingEvals) => {
         setAllEvaluations((prev) => {
-          const others = prev.filter((e) => e?.buildingId && e.buildingId !== selectedBuildingId);
-          const combined = [...others, ...buildingEvals];
+          const others = prev.filter((e) => e?.buildingId && e.buildingId !== selectedBuildingId && !e.isDeleted);
+          const combined = [...others, ...buildingEvals.filter((e) => !e.isDeleted)];
           updateBuildingsStats(combined);
           return combined;
         });
@@ -120,7 +131,7 @@ export function App() {
   const updateBuildingsStats = (evals: FixtureEvaluation[]) => {
     setBuildings((prev) =>
       prev.map((b) => {
-        const bEvals = evals.filter((e) => e?.buildingId === b.id);
+        const bEvals = evals.filter((e) => e?.buildingId === b.id && !e.isDeleted);
         const health = calculateWingHealth(bEvals);
         const leaks = bEvals.filter((e) => e.defects && e.defects.includes('leak')).length;
         const criticals = bEvals.filter((e) => e.status === 'broken').length;

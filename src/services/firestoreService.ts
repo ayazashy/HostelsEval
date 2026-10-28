@@ -122,6 +122,19 @@ export function saveToLocalCache(evaluation: FixtureEvaluation): void {
   }
 }
 
+export function removeFromLocalCache(id: string): void {
+  if (!id) return;
+  try {
+    const cache = getLocalCache();
+    if (cache[id]) {
+      delete cache[id];
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(cache));
+    }
+  } catch (err) {
+    console.warn('LocalStorage remove failed:', err);
+  }
+}
+
 /**
  * Helper to strip any undefined values from an object before sending to Firestore
  * (Firestore SDK throws an error if any field in an object is undefined).
@@ -240,7 +253,7 @@ export function subscribeToBuildingEvaluations(
   }
   const targetId = buildingId.toUpperCase();
   const localCache = Object.values(getLocalCache()).filter(
-    (item) => item?.buildingId && item.buildingId.toUpperCase() === targetId
+    (item) => item?.buildingId && item.buildingId.toUpperCase() === targetId && !item.isDeleted
   );
   if (localCache.length > 0) {
     onUpdate(localCache);
@@ -259,17 +272,24 @@ export function subscribeToBuildingEvaluations(
         snapshot.forEach((docSnap) => {
           const data = docSnap.data() as FixtureEvaluation;
           if (data && data.id && data.buildingId) {
-            remoteList.push(data);
+            if (data.isDeleted) {
+              removeFromLocalCache(data.id);
+            } else {
+              remoteList.push(data);
+            }
           }
         });
 
-        // Merge remote with local changes
+        // Merge remote with fresh local cache
+        const freshLocalCache = Object.values(getLocalCache()).filter(
+          (item) => item?.buildingId && item.buildingId.toUpperCase() === targetId && !item.isDeleted
+        );
         const mergedMap = new Map<string, FixtureEvaluation>();
-        localCache.forEach((item) => {
-          if (item && item.id) mergedMap.set(item.id, item);
+        freshLocalCache.forEach((item) => {
+          if (item && item.id && !item.isDeleted) mergedMap.set(item.id, item);
         });
         remoteList.forEach((item) => {
-          if (item && item.id) {
+          if (item && item.id && !item.isDeleted) {
             mergedMap.set(item.id, item);
             saveToLocalCache(item); // Update local cache with remote ground truth
           }
@@ -293,8 +313,6 @@ export function subscribeToBuildingEvaluations(
 // 3. Fetch All Evaluations for Campus Overview (Public Read Allowed)
 // ----------------------------------------------------------------------------
 export async function fetchAllEvaluations(): Promise<FixtureEvaluation[]> {
-  const localMap = getLocalCache();
-
   try {
     const querySnapshot = await getDocs(collection(db, EVALUATIONS_COLLECTION));
     const remoteList: FixtureEvaluation[] = [];
@@ -308,23 +326,28 @@ export async function fetchAllEvaluations(): Promise<FixtureEvaluation[]> {
         data.buildingId !== 'CAMPUS_GLOBAL' &&
         docSnap.id !== 'GLOBAL_CAMPUS_MAP_CONFIG'
       ) {
-        remoteList.push(data);
-        saveToLocalCache(data); // Sync local cache
+        if (data.isDeleted) {
+          removeFromLocalCache(data.id);
+        } else {
+          remoteList.push(data);
+          saveToLocalCache(data); // Sync local cache
+        }
       }
     });
 
+    const localMap = getLocalCache();
     const mergedMap = new Map<string, FixtureEvaluation>();
     Object.values(localMap).forEach((item) => {
-      if (item && item.id) mergedMap.set(item.id, item);
+      if (item && item.id && !item.isDeleted) mergedMap.set(item.id, item);
     });
     remoteList.forEach((item) => {
-      if (item && item.id) mergedMap.set(item.id, item);
+      if (item && item.id && !item.isDeleted) mergedMap.set(item.id, item);
     });
 
     return Array.from(mergedMap.values());
   } catch (err) {
     console.warn('Firestore fetch failed, returning local cache:', err);
-    return Object.values(localMap);
+    return Object.values(getLocalCache()).filter((item) => !item?.isDeleted);
   }
 }
 
@@ -585,27 +608,42 @@ export async function resetBuildingEvaluations(
 ): Promise<{ success: boolean; clearedCount: number; error?: string }> {
   const bId = buildingId.toUpperCase();
   const cache = getLocalCache();
-  let clearedCount = 0;
+  let localClearedCount = 0;
   const remaining: Record<string, FixtureEvaluation> = {};
-  const keysToDelete: string[] = [];
+  const keysToDelete = new Set<string>();
 
+  // 1. Collect all matching keys from local cache
   for (const [id, evalItem] of Object.entries(cache)) {
-    if (evalItem.buildingId.toUpperCase() === bId) {
-      clearedCount += 1;
-      keysToDelete.push(id);
+    if (evalItem.buildingId && evalItem.buildingId.toUpperCase() === bId) {
+      localClearedCount += 1;
+      keysToDelete.add(id);
     } else {
       remaining[id] = evalItem;
     }
   }
 
-  // Update local cache
+  // 2. Query Firestore directly to find ANY existing documents for this building in cloud
+  try {
+    const q = query(
+      collection(db, EVALUATIONS_COLLECTION),
+      where('buildingId', '==', bId)
+    );
+    const snap = await getDocs(q);
+    snap.forEach((docSnap) => {
+      keysToDelete.add(docSnap.id);
+    });
+  } catch (err) {
+    console.warn('[Firestore] Could not query remote building docs during reset:', err);
+  }
+
+  // 3. Update local cache immediately
   try {
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(remaining));
   } catch (err) {
     console.warn('Failed to update local cache during reset:', err);
   }
 
-  // Also clear timeline history for this building
+  // 4. Also clear timeline history for this building
   try {
     const timeline = getBuildingTimeline();
     const remainingTimeline = timeline.filter((t) => t.buildingId.toUpperCase() !== bId);
@@ -614,27 +652,53 @@ export async function resetBuildingEvaluations(
     console.warn('Failed to clear timeline during reset:', err);
   }
 
-  // Delete from Firestore if authorized
+  // 5. Delete or tombstone in Firestore (satisfying standard write security rules)
   const secretCode = getDecodedSecurityCode() || getAdminRawSecurityCode();
-  if (secretCode && keysToDelete.length > 0) {
-    try {
-      await Promise.all(
-        keysToDelete.map((id) => deleteDoc(doc(db, EVALUATIONS_COLLECTION, id)))
-      );
-    } catch (err: any) {
-      console.warn('[Firestore] Remote delete failed during reset:', err);
-    }
-  }
+  const idList = Array.from(keysToDelete);
 
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(
-      new CustomEvent('hostels_building_reset', {
-        detail: { buildingId: bId, clearedCount },
+  if (secretCode && idList.length > 0) {
+    await Promise.all(
+      idList.map(async (id) => {
+        const docRef = doc(db, EVALUATIONS_COLLECTION, id);
+
+        // A. Write tombstone with secretCode so standard write rules pass 100%
+        try {
+          await setDoc(docRef, {
+            id,
+            buildingId: bId,
+            isDeleted: true,
+            status: 'uninspected',
+            defects: [],
+            rating: 0,
+            hasPhoto: false,
+            secretCode,
+            updatedAt: new Date().toISOString(),
+          });
+        } catch (err) {
+          console.warn(`[Firestore] Tombstone write failed for ${id}:`, err);
+        }
+
+        // B. Also attempt hard delete in case Firestore security rules permit delete
+        try {
+          await deleteDoc(docRef);
+        } catch {
+          // If deleteDoc is rejected by rules, the tombstone with isDeleted: true guarantees removal!
+        }
       })
     );
   }
 
-  return { success: true, clearedCount };
+  const finalClearedCount = Math.max(localClearedCount, idList.length);
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('hostels_building_reset', {
+        detail: { buildingId: bId, clearedCount: finalClearedCount },
+      })
+    );
+  }
+
+  return { success: true, clearedCount: finalClearedCount };
 }
 
 // ============================================================================

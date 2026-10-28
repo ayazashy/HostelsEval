@@ -3,8 +3,9 @@
 // يتيح للمشرف تصدير البيانات (CSV/JSON) وإعادة تعيين بيانات أي مبنى منفرداً
 // ============================================================================
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BUILDINGS_CONFIG } from '../../config/buildings';
+import { FixtureEvaluation, EvaluationHistoryEntry } from '../../types/hostel';
 import {
   exportBuildingDataAsJSON,
   exportBuildingDataAsCSV,
@@ -25,28 +26,58 @@ import {
   RefreshCw,
   Search,
   Check,
+  Loader2,
 } from 'lucide-react';
 
 interface DataManagementTabProps {
+  allEvaluations?: FixtureEvaluation[];
   onRefreshEvaluations?: () => void;
 }
 
 export const DataManagementTab: React.FC<DataManagementTabProps> = ({
+  allEvaluations,
   onRefreshEvaluations,
 }) => {
   const [selectedBuildingId, setSelectedBuildingId] = useState<string>('B14');
   const [resetConfirmId, setResetConfirmId] = useState<string | null>(null);
   const [typedConfirmation, setTypedConfirmation] = useState('');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [isResetting, setIsResetting] = useState(false);
 
-  const allEvals = getAllCachedEvaluations();
-  const timeline = getBuildingTimeline();
+  const [evaluationsList, setEvaluationsList] = useState<FixtureEvaluation[]>(() => {
+    return allEvaluations && allEvaluations.length > 0
+      ? allEvaluations.filter((e) => !e.isDeleted)
+      : getAllCachedEvaluations().filter((e) => !e.isDeleted);
+  });
+  const [timelineList, setTimelineList] = useState<EvaluationHistoryEntry[]>(() => getBuildingTimeline());
 
-  const selectedBuildingEvals = allEvals.filter(
-    (e) => e.buildingId.toUpperCase() === selectedBuildingId.toUpperCase()
+  useEffect(() => {
+    if (allEvaluations) {
+      setEvaluationsList(allEvaluations.filter((item) => !item.isDeleted));
+    }
+  }, [allEvaluations]);
+
+  useEffect(() => {
+    const handleResetEvent = (e: any) => {
+      const bId = e?.detail?.buildingId;
+      if (bId) {
+        setEvaluationsList((prev) =>
+          prev.filter((item) => item.buildingId && item.buildingId.toUpperCase() !== bId.toUpperCase())
+        );
+        setTimelineList((prev) =>
+          prev.filter((item) => item.buildingId && item.buildingId.toUpperCase() !== bId.toUpperCase())
+        );
+      }
+    };
+    window.addEventListener('hostels_building_reset', handleResetEvent);
+    return () => window.removeEventListener('hostels_building_reset', handleResetEvent);
+  }, []);
+
+  const selectedBuildingEvals = evaluationsList.filter(
+    (e) => e.buildingId && e.buildingId.toUpperCase() === selectedBuildingId.toUpperCase() && !e.isDeleted
   );
-  const selectedBuildingTimeline = timeline.filter(
-    (t) => t.buildingId.toUpperCase() === selectedBuildingId.toUpperCase()
+  const selectedBuildingTimeline = timelineList.filter(
+    (t) => t.buildingId && t.buildingId.toUpperCase() === selectedBuildingId.toUpperCase()
   );
 
   const downloadFile = (content: string, filename: string, mimeType: string) => {
@@ -82,30 +113,71 @@ export const DataManagementTab: React.FC<DataManagementTabProps> = ({
     setTimeout(() => setStatusMessage(null), 4000);
   };
 
+  const isConfirmationValid = (typed: string, targetId: string | null): boolean => {
+    if (!typed || !targetId) return false;
+    // Normalize Arabic numerals: ٠-٩ -> 0-9
+    const normalizedTyped = typed
+      .replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d).toString())
+      .trim()
+      .toUpperCase();
+    const normalizedTarget = targetId.trim().toUpperCase();
+
+    // 1. Direct match: e.g. "B14" === "B14"
+    if (normalizedTyped === normalizedTarget) return true;
+
+    // 2. Pure digits match: e.g. "14" === "14"
+    const targetDigits = normalizedTarget.replace(/\D/g, '');
+    const typedDigits = normalizedTyped.replace(/\D/g, '');
+    if (targetDigits && typedDigits === targetDigits) return true;
+
+    // 3. Match with Arabic "مبنى" or "مبني": e.g. "مبنى 14" -> "14"
+    const strippedTyped = normalizedTyped.replace(/مبنى|مبني|BUILDING|\s+/g, '');
+    if (strippedTyped === normalizedTarget || strippedTyped === targetDigits) return true;
+
+    return false;
+  };
+
   const handleConfirmReset = async () => {
-    if (!resetConfirmId) return;
-    if (typedConfirmation.trim().toUpperCase() !== resetConfirmId.toUpperCase()) {
+    if (!resetConfirmId || isResetting) return;
+    if (!isConfirmationValid(typedConfirmation, resetConfirmId)) {
       alert(`يرجى كتابة رمز المبنى "${resetConfirmId}" بدقة للتأكيد`);
       return;
     }
 
-    const res = await resetBuildingEvaluations(resetConfirmId);
-    if (res.success) {
-      logAuditEvent({
-        actorName: 'المشرف العام',
-        actorRole: 'admin',
-        buildingId: resetConfirmId,
-        action: 'feature_toggled',
-        details: `تمت إعادة تعيين ومسح بيانات المبنى بالكامل (${res.clearedCount} تقييم)`,
-      });
+    setIsResetting(true);
+    try {
+      const res = await resetBuildingEvaluations(resetConfirmId);
+      if (res.success) {
+        logAuditEvent({
+          actorName: 'المشرف العام',
+          actorRole: 'admin',
+          buildingId: resetConfirmId,
+          action: 'feature_toggled',
+          details: `تمت إعادة تعيين ومسح بيانات المبنى بالكامل (${res.clearedCount} تقييم)`,
+        });
 
-      setStatusMessage(`تمت إعادة تعيين بيانات المبنى ${resetConfirmId} بنجاح (${res.clearedCount} عنصر تم مسحه)`);
-      if (onRefreshEvaluations) onRefreshEvaluations();
+        // Immediately update local state in component
+        setEvaluationsList((prev) =>
+          prev.filter((e) => e.buildingId && e.buildingId.toUpperCase() !== resetConfirmId.toUpperCase())
+        );
+        setTimelineList((prev) =>
+          prev.filter((t) => t.buildingId && t.buildingId.toUpperCase() !== resetConfirmId.toUpperCase())
+        );
+
+        setStatusMessage(`تمت إعادة تعيين بيانات المبنى ${resetConfirmId} بنجاح (${res.clearedCount} عنصر تم مسحه)`);
+        if (onRefreshEvaluations) {
+          onRefreshEvaluations();
+        }
+      }
+    } catch (err: any) {
+      console.error('Failed to reset building evaluations:', err);
+      alert('حدث خطأ أثناء إعادة تعيين بيانات المبنى');
+    } finally {
+      setIsResetting(false);
+      setResetConfirmId(null);
+      setTypedConfirmation('');
+      setTimeout(() => setStatusMessage(null), 5000);
     }
-
-    setResetConfirmId(null);
-    setTypedConfirmation('');
-    setTimeout(() => setStatusMessage(null), 5000);
   };
 
   const currentBuilding = BUILDINGS_CONFIG.find((b) => b.id === selectedBuildingId);
@@ -144,7 +216,7 @@ export const DataManagementTab: React.FC<DataManagementTabProps> = ({
             <span>تصدير بيانات جميع مباني الحرم الجامعي (34 مبنى دفعة واحدة)</span>
           </h4>
           <p className="text-xs text-slate-600 mt-1">
-            إجمالي التقييمات المحفوظة حالياً: <strong>{allEvals.length}</strong> تقييم • إجمالي السجلات الزمنية: <strong>{timeline.length}</strong> عملية فحص
+            إجمالي التقييمات المحفوظة حالياً: <strong>{evaluationsList.length}</strong> تقييم • إجمالي السجلات الزمنية: <strong>{timelineList.length}</strong> عملية فحص
           </p>
         </div>
 
@@ -295,29 +367,55 @@ export const DataManagementTab: React.FC<DataManagementTabProps> = ({
               </label>
               <input
                 type="text"
+                autoFocus
+                disabled={isResetting}
                 value={typedConfirmation}
                 onChange={(e) => setTypedConfirmation(e.target.value)}
-                placeholder={resetConfirmId}
-                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-center font-mono font-bold text-slate-900 text-sm focus:outline-none focus:border-rose-500 uppercase"
+                onKeyDown={(e) => {
+                  if (
+                    e.key === 'Enter' &&
+                    isConfirmationValid(typedConfirmation, resetConfirmId) &&
+                    !isResetting
+                  ) {
+                    handleConfirmReset();
+                  }
+                }}
+                placeholder={`اكتب ${resetConfirmId} أو ${resetConfirmId.replace(/\D/g, '')}...`}
+                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-center font-mono font-bold text-slate-900 text-sm focus:outline-none focus:border-rose-500 uppercase disabled:opacity-50"
               />
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
               <button
                 type="button"
-                onClick={() => setResetConfirmId(null)}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition"
+                disabled={isResetting}
+                onClick={() => {
+                  if (!isResetting) {
+                    setResetConfirmId(null);
+                    setTypedConfirmation('');
+                  }
+                }}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 rounded-xl text-xs font-bold transition"
               >
                 إلغاء
               </button>
               <button
                 type="button"
-                disabled={typedConfirmation.trim().toUpperCase() !== resetConfirmId.toUpperCase()}
+                disabled={!isConfirmationValid(typedConfirmation, resetConfirmId) || isResetting}
                 onClick={handleConfirmReset}
-                className="px-5 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl text-xs font-bold transition shadow-sm flex items-center gap-1.5"
+                className="px-5 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl text-xs font-bold transition shadow-sm flex items-center gap-1.5 min-w-[140px] justify-center"
               >
-                <Trash2 className="w-4 h-4" />
-                <span>تأكيد المسح النهائي</span>
+                {isResetting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>جاري المسح...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>تأكيد المسح النهائي</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

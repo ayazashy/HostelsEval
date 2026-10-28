@@ -56,6 +56,7 @@ export interface FixtureEvaluation {
   inspectorName?: string;
   inspectorId?: string;
   updatedAt: string;
+  isDeleted?: boolean;
 }
 
 export type BuildingStatus = 'uninspected' | 'good' | 'warning' | 'critical';

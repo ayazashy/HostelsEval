@@ -1370,7 +1370,10 @@ service cloud.firestore {
 
       {/* Data Management, Export & Per-Building Reset */}
       {activeTab === 'data_management' && (
-        <DataManagementTab onRefreshEvaluations={onRefreshEvaluations} />
+        <DataManagementTab
+          allEvaluations={allEvaluations}
+          onRefreshEvaluations={onRefreshEvaluations}
+        />
       )}
     </div>
   );
