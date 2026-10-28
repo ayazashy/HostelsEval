@@ -14,6 +14,7 @@ import { DEFECT_TAGS } from '../../config/facilityTemplates';
 import { generateFixtureUID } from '../../utils/uidGenerator';
 import { compressAndWatermarkImage } from '../../utils/imageCompressor';
 import { CloudSaveResult } from '../../services/firestoreService';
+import { ImageViewerModal } from '../Common/ImageViewerModal';
 import {
   Camera,
   Image as ImageIcon,
@@ -24,6 +25,7 @@ import {
   Check,
   Lock,
   Cloud,
+  Maximize2,
 } from 'lucide-react';
 
 interface FixtureCardProps {
@@ -72,6 +74,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
   const [photoBase64, setPhotoBase64] = useState<string | undefined>(
     existingEvaluation?.photoBase64
   );
+  const [showPhotoViewer, setShowPhotoViewer] = useState<boolean>(false);
   const [isCompressing, setIsCompressing] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [saveFeedback, setSaveFeedback] = useState<{
@@ -321,25 +324,34 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
       <div className="flex flex-col sm:flex-row gap-2 pt-1 border-t border-slate-100">
         <div className="flex-1">
           {photoBase64 ? (
-            <div className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+            <div
+              onClick={() => setShowPhotoViewer(true)}
+              className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-100 cursor-pointer group shadow-xs h-24"
+            >
               <img
                 src={photoBase64}
                 alt="دليل التفتيش"
-                className="w-full h-24 object-cover"
+                className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105"
               />
+              <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-xs text-white p-1 rounded-lg pointer-events-none transition group-hover:bg-blue-600">
+                <Maximize2 className="w-3.5 h-3.5" />
+              </div>
               <button
                 type="button"
-                onClick={() => setPhotoBase64(undefined)}
-                className="absolute top-1.5 left-1.5 bg-rose-600 text-white p-1 rounded-lg hover:bg-rose-700"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPhotoBase64(undefined);
+                }}
+                className="absolute top-1.5 left-1.5 bg-rose-600/90 hover:bg-rose-700 text-white p-1 rounded-lg shadow-sm transition active:scale-95 z-10"
                 title="حذف الصورة"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-1.5 h-24">
+            <div className="grid grid-cols-2 gap-2 h-24">
               {/* Option 1: Direct Camera Snap */}
-              <label className="cursor-pointer border border-dashed border-slate-300 hover:border-blue-500 rounded-xl p-2 flex flex-col items-center justify-center gap-1 text-center bg-slate-50 hover:bg-white transition group">
+              <label className="cursor-pointer border border-dashed border-slate-300 hover:border-blue-500 rounded-xl p-2 flex flex-col items-center justify-center gap-1.5 text-center bg-slate-50 hover:bg-white transition group select-none active:bg-blue-50">
                 <input
                   type="file"
                   accept="image/*"
@@ -352,11 +364,10 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                 <span className="font-bold text-[11px] text-slate-700 leading-tight">
                   {isCompressing ? 'جاري...' : 'التقاط بالكاميرا'}
                 </span>
-                <span className="text-[9px] text-slate-400">تصوير مباشر</span>
               </label>
 
               {/* Option 2: Upload from Library / Gallery */}
-              <label className="cursor-pointer border border-dashed border-slate-300 hover:border-violet-500 rounded-xl p-2 flex flex-col items-center justify-center gap-1 text-center bg-slate-50 hover:bg-white transition group">
+              <label className="cursor-pointer border border-dashed border-slate-300 hover:border-violet-500 rounded-xl p-2 flex flex-col items-center justify-center gap-1.5 text-center bg-slate-50 hover:bg-white transition group select-none active:bg-violet-50">
                 <input
                   type="file"
                   accept="image/*"
@@ -368,9 +379,17 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                 <span className="font-bold text-[11px] text-slate-700 leading-tight">
                   {isCompressing ? 'جاري...' : 'اختيار من المعرض'}
                 </span>
-                <span className="text-[9px] text-slate-400">مكتبة الصور</span>
               </label>
             </div>
+          )}
+
+          {/* Interactive Full-Screen Image Lightbox with Pinch-to-Zoom */}
+          {showPhotoViewer && photoBase64 && (
+            <ImageViewerModal
+              src={photoBase64}
+              title={`توثيق ${template.nameAr}`}
+              onClose={() => setShowPhotoViewer(false)}
+            />
           )}
         </div>
 

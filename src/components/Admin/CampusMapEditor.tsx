@@ -15,6 +15,7 @@ import {
 } from '../../utils/buildingStructureStore';
 import { CampusMapConfig } from '../../types/hostel';
 import { Campus3DViewer } from '../3D/Campus3DViewer';
+import { ImageViewerModal } from '../Common/ImageViewerModal';
 import {
   Map,
   Upload,
@@ -36,6 +37,7 @@ import {
   CheckCircle2,
   ArrowRight,
   ArrowLeft as ArrowLeftIcon,
+  Maximize2,
 } from 'lucide-react';
 
 export const CampusMapEditor: React.FC = () => {
@@ -56,8 +58,9 @@ export const CampusMapEditor: React.FC = () => {
   const [cloudStatusMsg, setCloudStatusMsg] = useState<string | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
-  // 2. Image adjustments drawer toggle & settings
+  // 2. Image adjustments drawer toggle & preview modal
   const [showImageDrawer, setShowImageDrawer] = useState(false);
+  const [showImagePreviewModal, setShowImagePreviewModal] = useState(false);
 
   // 3. Auto-advance to next building on tap placement
   const [autoAdvance, setAutoAdvance] = useState(true);
@@ -531,6 +534,22 @@ export const CampusMapEditor: React.FC = () => {
 
           {config.groundImageUrl && (
             <>
+              {/* Ground Image Clickable Thumbnail */}
+              <div
+                onClick={() => setShowImagePreviewModal(true)}
+                className="relative w-8 h-8 rounded-lg overflow-hidden border border-slate-300 hover:border-blue-500 cursor-pointer shrink-0 shadow-xs group"
+                title="معاينة المخطط ملء الشاشة"
+              >
+                <img
+                  src={config.groundImageUrl}
+                  alt="معاينة المخطط"
+                  className="w-full h-full object-cover group-hover:scale-110 transition"
+                />
+                <div className="absolute inset-0 bg-black/25 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white pointer-events-none">
+                  <Maximize2 className="w-3.5 h-3.5" />
+                </div>
+              </div>
+
               <button
                 onClick={() => setShowImageDrawer(!showImageDrawer)}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 border ${
@@ -585,6 +604,15 @@ export const CampusMapEditor: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowImagePreviewModal(true)}
+                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-bold transition flex items-center gap-1 border border-slate-700 shadow-xs"
+                title="معاينة المخطط ملء الشاشة مع التكبير"
+              >
+                <Maximize2 className="w-3 h-3" />
+                <span>معاينة مكبرة</span>
+              </button>
+
               <button
                 onClick={handleFitImage}
                 className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-xs"
@@ -1274,6 +1302,14 @@ export const CampusMapEditor: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {showImagePreviewModal && config.groundImageUrl && (
+        <ImageViewerModal
+          src={config.groundImageUrl}
+          title="مخطط الحرم الجامعي"
+          onClose={() => setShowImagePreviewModal(false)}
+        />
+      )}
     </div>
   );
 };

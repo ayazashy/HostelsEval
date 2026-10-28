@@ -2,10 +2,11 @@
 // 📑 تقرير المسح الشامل لمرافق الإسكان الطلابي (Light Mode)
 // ============================================================================
 
-import React from 'react';
+import React, { useState } from 'react';
 import { BuildingInfo, FixtureEvaluation } from '../../types/hostel';
 import { computeCampusStats } from '../../utils/healthScore';
-import { Printer, X, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { ImageViewerModal } from '../Common/ImageViewerModal';
+import { Printer, X, ShieldCheck, AlertTriangle, Maximize2, FileText } from 'lucide-react';
 
 interface OfficialReportModalProps {
   buildings: BuildingInfo[];
@@ -18,6 +19,8 @@ export const OfficialReportModal: React.FC<OfficialReportModalProps> = ({
   allEvaluations,
   onClose,
 }) => {
+  const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+
   const stats = computeCampusStats(buildings, allEvaluations);
   const now = new Date();
   const dateStr = now.toLocaleDateString('ar-SA', {
@@ -190,17 +193,26 @@ export const OfficialReportModal: React.FC<OfficialReportModalProps> = ({
                 {criticalItems.map((item) => (
                   <div
                     key={item.id}
-                    className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm"
+                    onClick={() => item.photoBase64 && setSelectedPhoto(item.photoBase64)}
+                    className={`border border-slate-200 rounded-xl overflow-hidden bg-white shadow-xs ${
+                      item.photoBase64 ? 'cursor-pointer group hover:shadow-md transition' : ''
+                    }`}
                   >
                     {item.photoBase64 ? (
-                      <img
-                        src={item.photoBase64}
-                        alt={item.id}
-                        className="w-full h-24 object-cover"
-                      />
+                      <div className="relative w-full h-24 overflow-hidden bg-slate-100">
+                        <img
+                          src={item.photoBase64}
+                          alt={item.id}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                        />
+                        <div className="absolute bottom-1 right-1 bg-black/60 backdrop-blur-xs text-white p-1 rounded-md pointer-events-none transition group-hover:bg-blue-600">
+                          <Maximize2 className="w-3 h-3" />
+                        </div>
+                      </div>
                     ) : (
-                      <div className="w-full h-24 bg-slate-100 flex items-center justify-center text-[10px] text-slate-400">
-                        سجل رقمي
+                      <div className="w-full h-24 bg-slate-50 flex flex-col items-center justify-center gap-1 text-[10px] text-slate-400">
+                        <FileText className="w-4 h-4 text-slate-300" />
+                        <span>سجل رقمي</span>
                       </div>
                     )}
                     <div className="p-2 text-[10px] border-t border-slate-100">
@@ -243,6 +255,15 @@ export const OfficialReportModal: React.FC<OfficialReportModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Interactive Full-Screen Image Lightbox with Pinch-to-Zoom */}
+      {selectedPhoto && (
+        <ImageViewerModal
+          src={selectedPhoto}
+          title="توثيق تقرير المعاينة"
+          onClose={() => setSelectedPhoto(null)}
+        />
+      )}
     </div>
   );
 };

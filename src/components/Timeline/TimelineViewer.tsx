@@ -20,7 +20,9 @@ import {
   Image as ImageIcon,
   Check,
   ChevronDown,
+  Maximize2,
 } from 'lucide-react';
+import { ImageViewerModal } from '../Common/ImageViewerModal';
 
 interface TimelineViewerProps {
   buildingId?: string; // Optional: filter by building
@@ -298,17 +300,17 @@ export const TimelineViewer: React.FC<TimelineViewerProps> = ({
                     {entry.photoBase64 && (
                       <div className="shrink-0">
                         <button
+                          type="button"
                           onClick={() => setSelectedPhoto(entry.photoBase64 || null)}
-                          className="relative group/img overflow-hidden rounded-xl border border-slate-200 w-20 h-20 shadow-sm"
-                          title="اضغط لتكبير الصورة المرفقة"
+                          className="relative group/img overflow-hidden rounded-xl border border-slate-200 w-20 h-20 shadow-xs cursor-pointer block"
                         >
                           <img
                             src={entry.photoBase64}
                             alt="توثيق العطل"
                             className="w-full h-full object-cover group-hover/img:scale-105 transition"
                           />
-                          <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition text-white">
-                            <ImageIcon className="w-5 h-5" />
+                          <div className="absolute bottom-1 right-1 bg-black/60 backdrop-blur-xs text-white p-1 rounded-md pointer-events-none transition group-hover/img:bg-blue-600">
+                            <Maximize2 className="w-3 h-3" />
                           </div>
                         </button>
                       </div>
@@ -435,23 +437,13 @@ export const TimelineViewer: React.FC<TimelineViewerProps> = ({
         </div>
       )}
 
-      {/* Photo Zoom Modal */}
+      {/* Interactive Full-Screen Image Lightbox with Pinch-to-Zoom */}
       {selectedPhoto && (
-        <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 cursor-pointer"
-          onClick={() => setSelectedPhoto(null)}
-        >
-          <div className="relative max-w-2xl w-full bg-white rounded-2xl overflow-hidden p-2 shadow-2xl">
-            <img
-              src={selectedPhoto}
-              alt="صورة العطل مكبرة"
-              className="w-full max-h-[80vh] object-contain rounded-xl"
-            />
-            <div className="p-3 text-center text-xs text-slate-600 font-bold">
-              اضغط في أي مكان للإغلاق
-            </div>
-          </div>
-        </div>
+        <ImageViewerModal
+          src={selectedPhoto}
+          title="توثيق بلاغ الصيانة"
+          onClose={() => setSelectedPhoto(null)}
+        />
       )}
     </div>
   );

@@ -10,6 +10,7 @@ import { WING_NAMES_AR } from '../../config/buildings';
 import { summarizeWing, getScoreColor } from '../../utils/healthScore';
 import { getBuildingStructure } from '../../utils/buildingStructureStore';
 import { TimelineViewer } from '../Timeline/TimelineViewer';
+import { ImageViewerModal } from '../Common/ImageViewerModal';
 import {
   ArrowRight,
   ClipboardEdit,
@@ -18,6 +19,7 @@ import {
   Layers,
   Lock,
   Clock,
+  Maximize2,
 } from 'lucide-react';
 
 interface BuildingDetailProps {
@@ -227,8 +229,9 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
         </div>
 
         {photoEvaluations.length === 0 ? (
-          <div className="text-center py-8 border border-dashed border-slate-200 rounded-xl text-slate-500 text-xs flex flex-col items-center gap-2">
-            <span>لم يتم تسجيل صور توثيقية لهذا المبنى بعد.</span>
+          <div className="text-center py-8 border border-dashed border-slate-200 rounded-xl text-slate-400 text-xs flex flex-col items-center justify-center gap-1.5 bg-slate-50/50">
+            <Camera className="w-6 h-6 text-slate-300 stroke-[1.5]" />
+            <span className="font-medium text-slate-500">لا توجد صور توثيقية مسجلة بعد</span>
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
@@ -236,18 +239,23 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
               <div
                 key={item.id}
                 onClick={() => setActivePhotoModal(item.photoBase64 || null)}
-                className="group relative rounded-xl overflow-hidden border border-slate-200 bg-slate-100 cursor-pointer shadow-sm"
+                className="group relative rounded-xl overflow-hidden border border-slate-200 bg-slate-100 cursor-pointer shadow-xs hover:shadow-md transition"
               >
-                <img
-                  src={item.photoBase64}
-                  alt={item.id}
-                  className="w-full h-28 object-cover group-hover:scale-105 transition-transform duration-200"
-                />
+                <div className="relative w-full h-28 overflow-hidden bg-slate-200">
+                  <img
+                    src={item.photoBase64}
+                    alt={item.id}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                  />
+                  <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-xs text-white p-1 rounded-lg pointer-events-none transition group-hover:bg-blue-600">
+                    <Maximize2 className="w-3.5 h-3.5" />
+                  </div>
+                </div>
                 <div className="p-2 bg-white border-t border-slate-100 flex flex-col">
                   <span className="text-[10px] font-mono font-bold text-slate-900 truncate">
                     {item.id}
                   </span>
-                  <span className="text-[9px] text-slate-500">
+                  <span className="text-[9px] text-slate-500 truncate">
                     {item.defects.join('، ') || 'توثيق حالة'}
                   </span>
                 </div>
@@ -264,34 +272,13 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
         currentUserName="إدارة الإسكان"
       />
 
-      {/* Full Photo Modal */}
+      {/* Interactive Full-Screen Image Lightbox with Pinch-to-Zoom */}
       {activePhotoModal && (
-        <div
-          onClick={() => setActivePhotoModal(null)}
-          className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="max-w-2xl w-full bg-white border border-slate-300 rounded-2xl overflow-hidden shadow-2xl"
-          >
-            <img
-              src={activePhotoModal}
-              alt="صورة مكبرة"
-              className="w-full max-h-[75vh] object-contain bg-slate-50"
-            />
-            <div className="p-3 flex justify-between items-center bg-slate-100 border-t border-slate-200">
-              <span className="text-xs text-slate-600">
-                صورة توثيقية رسمية بختم التدقيق المعتمد
-              </span>
-              <button
-                onClick={() => setActivePhotoModal(null)}
-                className="px-4 py-1.5 bg-slate-200 text-slate-800 text-xs font-bold rounded-lg hover:bg-slate-300"
-              >
-                إغلاق
-              </button>
-            </div>
-          </div>
-        </div>
+        <ImageViewerModal
+          src={activePhotoModal}
+          title={`توثيق ${building.nameAr}`}
+          onClose={() => setActivePhotoModal(null)}
+        />
       )}
     </div>
   );
