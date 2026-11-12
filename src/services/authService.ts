@@ -16,6 +16,12 @@ import {
   DecryptedAdminVault,
 } from '../utils/cryptoVault';
 import {
+  AUTH_HASH_SALT,
+  MAINTENANCE_CODE_HASH,
+  CLEANING_CODE_HASH,
+  LEADER_CODE_HASHES,
+} from '../config/authHashes';
+import {
   checkIsAdminUnlocked,
   getAdminVaultSession as getSessionVault,
   setAdminSession,
@@ -39,21 +45,63 @@ const DEFAULT_FEATURE_FLAGS: AdminFeatureFlags = {
 
 const FEATURE_FLAGS_KEY = 'hostels_admin_feature_flags';
 const AUDIT_LOGS_KEY = 'hostels_audit_logs';
+const ADMIN_CREDENTIALS_CACHE_KEY = 'hostels_admin_credentials_cache';
 
-// Default 34 distinct building credentials
-// Deterministically generated so each building has an isolated, unique PIN/Token
+export interface PrivateCredentialsBundle {
+  maintenance?: string;
+  cleaning?: string;
+  leaders?: Record<string, string>;
+}
+
+// Optional gitignored local credentials file (bundled only when present locally; {} in public repo)
+const localCredsModules = import.meta.glob('../config/credentials.local.json', {
+  eager: true,
+}) as Record<string, { default?: PrivateCredentialsBundle } & PrivateCredentialsBundle>;
+
+function loadLocalCredentialsBundle(): PrivateCredentialsBundle | null {
+  const firstMod = Object.values(localCredsModules)[0];
+  if (firstMod) {
+    return (firstMod.default || firstMod) as PrivateCredentialsBundle;
+  }
+  try {
+    const raw = localStorage.getItem(ADMIN_CREDENTIALS_CACHE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return null;
+}
+
+export function getAdminVisibleCredentials(): PrivateCredentialsBundle | null {
+  if (!checkIsAdminUnlocked()) return null;
+  return loadLocalCredentialsBundle();
+}
+
+export function saveAdminImportedCredentials(bundle: PrivateCredentialsBundle): void {
+  if (!checkIsAdminUnlocked()) return;
+  try {
+    localStorage.setItem(ADMIN_CREDENTIALS_CACHE_KEY, JSON.stringify(bundle));
+  } catch {}
+}
+
+async function computeSaltedSha256(value: string): Promise<string> {
+  const payload = `${AUTH_HASH_SALT}:${value.trim().toLowerCase()}`;
+  const bytes = new TextEncoder().encode(payload);
+  const digest = await window.crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+// 34 Building Leader Accounts (No plaintext codes stored in public repo)
 export const BUILDING_LEADER_ACCOUNTS: LeaderAccount[] = Array.from(
   { length: 34 },
   (_, idx) => {
     const num = idx + 1;
     const bId = `B${num.toString().padStart(2, '0')}`;
-    // Generate distinct access code (e.g. B14-7294)
-    const pin = (Math.abs(Math.sin(num * 997)) * 8999 + 1000).toFixed(0);
     return {
       buildingId: bId,
       buildingNameAr: `مبنى ${num}`,
       leaderName: `رائد ${bId}`,
-      accessCode: `${bId}-${pin}`,
+      accessCode: '••••••••',
       evaluationsSubmitted: 0,
     };
   }
@@ -142,44 +190,22 @@ export function lockAdminWorkspace(): void {
   }
 }
 
-export const DEFAULT_MAINTENANCE_ACCESS_CODE = 'MAXIMO-2026';
-export const DEFAULT_CLEANING_ACCESS_CODE = 'CLEAN-2026';
-const MAINTENANCE_CODE_KEY = 'hostels_maintenance_access_code';
-const CLEANING_CODE_KEY = 'hostels_cleaning_access_code';
-
-export function getMaintenanceAccessCode(): string {
-  try {
-    return localStorage.getItem(MAINTENANCE_CODE_KEY) || DEFAULT_MAINTENANCE_ACCESS_CODE;
-  } catch {
-    return DEFAULT_MAINTENANCE_ACCESS_CODE;
-  }
-}
-
-export function getCleaningAccessCode(): string {
-  try {
-    return localStorage.getItem(CLEANING_CODE_KEY) || DEFAULT_CLEANING_ACCESS_CODE;
-  } catch {
-    return DEFAULT_CLEANING_ACCESS_CODE;
-  }
-}
-
-export function loginMaintenanceWithCode(
+export async function loginMaintenanceWithCode(
   enteredCode: string,
   technicianName?: string,
   role: 'maintenance' | 'cleaning' = 'maintenance'
-): { success: boolean; error?: string; auth?: MaintenanceAuth } {
-  const validCode =
-    role === 'cleaning' ? getCleaningAccessCode() : getMaintenanceAccessCode();
-  const cleanEntered = enteredCode.trim().toLowerCase();
-  const cleanValid = validCode.trim().toLowerCase();
-  const pinOnly = cleanValid.includes('-') ? cleanValid.split('-')[1] : cleanValid;
+): Promise<{ success: boolean; error?: string; auth?: MaintenanceAuth }> {
+  const cleanEntered = enteredCode.trim();
+  if (!cleanEntered) {
+    return {
+      success: false,
+      error: 'يرجى إدخال كود الدخول أولاً.',
+    };
+  }
 
-  const isMatch =
-    cleanEntered === cleanValid ||
-    cleanEntered === pinOnly ||
-    cleanEntered === '2026' ||
-    (role === 'maintenance' && cleanEntered === 'maximo') ||
-    (role === 'cleaning' && (cleanEntered === 'clean' || cleanEntered === 'services'));
+  const targetHash = role === 'cleaning' ? CLEANING_CODE_HASH : MAINTENANCE_CODE_HASH;
+  const enteredHash = await computeSaltedSha256(cleanEntered);
+  const isMatch = enteredHash === targetHash;
 
   if (!isMatch) {
     return {
@@ -223,29 +249,37 @@ export function getActiveMaintenanceAuth(): MaintenanceAuth | null {
   return checkActiveMaintenanceAuth();
 }
 
-// 2. Building Leader Authentication (Distinct Credentials per Building)
-export function loginBuildingLeaderWithCode(
+// 2. Building Leader Authentication (Salted SHA-256 Verification)
+export async function loginBuildingLeaderWithCode(
   buildingId: string,
   enteredCode: string,
   inspectorName?: string
-): { success: boolean; error?: string; auth?: BuildingLeaderAuth } {
+): Promise<{ success: boolean; error?: string; auth?: BuildingLeaderAuth }> {
+  const bId = buildingId.toUpperCase();
   const account = BUILDING_LEADER_ACCOUNTS.find(
-    (acc) => acc.buildingId.toUpperCase() === buildingId.toUpperCase()
+    (acc) => acc.buildingId.toUpperCase() === bId
   );
 
   if (!account) {
     return { success: false, error: 'المبنى المحدد غير موجود في السجل' };
   }
 
-  // Verify distinct access code (accepts full code e.g. B14-7294 or PIN 7294)
-  const cleanEntered = enteredCode.trim().toLowerCase();
-  const cleanAccountCode = account.accessCode.toLowerCase();
-  const pinOnly = cleanAccountCode.includes('-') ? cleanAccountCode.split('-')[1] : cleanAccountCode;
+  const targetHash = LEADER_CODE_HASHES[bId];
+  if (!targetHash) {
+    return { success: false, error: 'لا يوجد كود مسجل لهذا المبنى' };
+  }
 
-  const isMatch =
-    cleanEntered === cleanAccountCode ||
-    cleanEntered === pinOnly ||
-    cleanEntered === `${account.buildingId.toLowerCase()}-${cleanEntered}`;
+  const cleanEntered = enteredCode.trim().toLowerCase();
+  const fullCandidate = cleanEntered.startsWith(`${bId.toLowerCase()}-`)
+    ? cleanEntered
+    : `${bId.toLowerCase()}-${cleanEntered}`;
+
+  const [directHash, prefixedHash] = await Promise.all([
+    computeSaltedSha256(cleanEntered),
+    computeSaltedSha256(fullCandidate),
+  ]);
+
+  const isMatch = directHash === targetHash || prefixedHash === targetHash;
 
   if (!isMatch) {
     return {

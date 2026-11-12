@@ -66,11 +66,11 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
     }
   };
 
-  const handleLeaderSubmit = (e: React.FormEvent) => {
+  const handleLeaderSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLeaderError(null);
 
-    const res = loginBuildingLeaderWithCode(buildingId, leaderCode, inspectorName);
+    const res = await loginBuildingLeaderWithCode(buildingId, leaderCode, inspectorName);
     if (res.success && res.auth) {
       onLeaderLogin(res.auth);
     } else {
@@ -78,11 +78,11 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
     }
   };
 
-  const handleMaintenanceSubmit = (e: React.FormEvent) => {
+  const handleMaintenanceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setMaintenanceError(null);
 
-    const res = loginMaintenanceWithCode(maintenanceCode, technicianName, staffTrack);
+    const res = await loginMaintenanceWithCode(maintenanceCode, technicianName, staffTrack);
     if (res.success && res.auth) {
       if (onMaintenanceLogin) {
         onMaintenanceLogin(res.auth);
@@ -287,8 +287,8 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
                   onChange={(e) => setMaintenanceCode(e.target.value)}
                   placeholder={
                     staffTrack === 'cleaning'
-                      ? 'الافتراضي: CLEAN-2026 أو 2026'
-                      : 'الافتراضي: MAXIMO-2026 أو 2026'
+                      ? 'أدخل كود دخول النظافة المعتمد من المشرف...'
+                      : 'أدخل كود دخول الصيانة المعتمد من المشرف...'
                   }
                   required
                   className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-xl pr-9 pl-4 py-2.5 placeholder-slate-400 font-mono"

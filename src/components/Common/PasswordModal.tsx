@@ -26,11 +26,11 @@ export const PasswordModal: React.FC<PasswordModalProps> = ({
   const [accessCode, setAccessCode] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
-    const result = loginBuildingLeaderWithCode(buildingId, accessCode, leaderName);
+    const result = await loginBuildingLeaderWithCode(buildingId, accessCode, leaderName);
     if (result.success && result.auth) {
       onSuccess(result.auth);
       onClose();

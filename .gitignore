@@ -11,6 +11,9 @@ node_modules
 dist
 dist-ssr
 *.local
+*.local.*
+PASSWORDS.local.*
+src/config/credentials.local.json
 .env
 .env.*
 !.env.example

@@ -17,6 +17,9 @@ import {
   logAuditEvent,
   impersonateBuildingLeader,
   getAdminVaultSession,
+  getAdminVisibleCredentials,
+  saveAdminImportedCredentials,
+  PrivateCredentialsBundle,
 } from '../../services/authService';
 import {
   testFirebaseCloudConnection,
@@ -389,6 +392,25 @@ service cloud.firestore {
       acc.buildingId.toLowerCase().includes(searchLeader.toLowerCase()) ||
       acc.buildingNameAr.includes(searchLeader)
   );
+
+  const [adminCreds, setAdminCreds] = useState<PrivateCredentialsBundle | null>(() =>
+    getAdminVisibleCredentials()
+  );
+
+  const handleImportCredsFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as PrivateCredentialsBundle;
+      saveAdminImportedCredentials(parsed);
+      setAdminCreds(parsed);
+    } catch {
+      alert('تعذر قراءة ملف الأكواد المحلي (credentials.local.json)');
+    } finally {
+      e.target.value = '';
+    }
+  };
 
   return (
     <div className="flex flex-col gap-6 max-w-6xl mx-auto">
@@ -984,9 +1006,79 @@ service cloud.firestore {
         </div>
       )}
 
-      {/* TAB 3: Leaders */}
+      {/* TAB 3: Leaders & Staff Passwords */}
       {activeTab === 'leaders' && (
         <div className="flex flex-col gap-4">
+          {/* Staff Portals Credentials (Maintenance + Cleaning & Pest Control) */}
+          <div className="bg-slate-900 text-white rounded-2xl p-4 flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-bold flex items-center gap-2">
+                  <KeyRound className="w-4 h-4 text-amber-400" />
+                  <span>أكواد دخول فرق الصيانة والنظافة وجميع رواد المباني (خاصة بالمشرف)</span>
+                </h3>
+                <p className="text-[11px] text-slate-300 mt-0.5">
+                  لا يتم تخزين هذه الأكواد بشكل مكشوف في المستودع العام؛ يتم قراءتها فقط من ملفك المحلي السري.
+                </p>
+              </div>
+              <label className="cursor-pointer px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-xl text-xs font-bold transition shrink-0">
+                <input
+                  type="file"
+                  accept="application/json,.json"
+                  onChange={handleImportCredsFile}
+                  className="hidden"
+                />
+                <span>استيراد credentials.local.json</span>
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div className="bg-white/10 border border-white/15 rounded-xl p-3 flex items-center justify-between">
+                <div>
+                  <span className="text-emerald-300 font-bold block">بوابة الصيانة المكثفة وماكسمو (4 أقسام)</span>
+                  <span className="font-mono text-sm font-black mt-0.5 block">
+                    {adminCreds?.maintenance || 'غير محمّل محلياً'}
+                  </span>
+                </div>
+                {adminCreds?.maintenance && (
+                  <button
+                    onClick={() => handleCopy(adminCreds.maintenance!)}
+                    className="p-2 rounded-lg bg-white/10 hover:bg-white/20"
+                    title="نسخ كود الصيانة"
+                  >
+                    {copiedCode === adminCreds.maintenance ? (
+                      <Check className="w-4 h-4 text-emerald-400" />
+                    ) : (
+                      <Copy className="w-4 h-4" />
+                    )}
+                  </button>
+                )}
+              </div>
+
+              <div className="bg-white/10 border border-white/15 rounded-xl p-3 flex items-center justify-between">
+                <div>
+                  <span className="text-sky-300 font-bold block">بوابة النظافة ومكافحة الحشرات والقوارض</span>
+                  <span className="font-mono text-sm font-black mt-0.5 block">
+                    {adminCreds?.cleaning || 'غير محمّل محلياً'}
+                  </span>
+                </div>
+                {adminCreds?.cleaning && (
+                  <button
+                    onClick={() => handleCopy(adminCreds.cleaning!)}
+                    className="p-2 rounded-lg bg-white/10 hover:bg-white/20"
+                    title="نسخ كود النظافة والآفات"
+                  >
+                    {copiedCode === adminCreds.cleaning ? (
+                      <Check className="w-4 h-4 text-emerald-400" />
+                    ) : (
+                      <Copy className="w-4 h-4" />
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
           <div className="flex items-center justify-between">
             <input
               type="text"
@@ -1011,39 +1103,44 @@ service cloud.firestore {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
-                {filteredLeaders.map((acc) => (
-                  <tr key={acc.buildingId} className="hover:bg-slate-50">
-                    <td className="p-3 font-bold text-slate-900">
-                      {acc.buildingNameAr} ({acc.buildingId})
-                    </td>
-                    <td className="p-3 text-slate-600">{acc.leaderName}</td>
-                    <td className="p-3 font-mono">
-                      <div className="inline-flex items-center gap-2 bg-slate-100 px-2.5 py-1 rounded border border-slate-200 text-slate-800">
-                        <span>{acc.accessCode}</span>
-                        <button
-                          onClick={() => handleCopy(acc.accessCode)}
-                          className="hover:text-blue-600"
-                          title="نسخ الكود"
-                        >
-                          {copiedCode === acc.accessCode ? (
-                            <Check className="w-3.5 h-3.5 text-emerald-600" />
-                          ) : (
-                            <Copy className="w-3.5 h-3.5" />
+                {filteredLeaders.map((acc) => {
+                  const realCode = adminCreds?.leaders?.[acc.buildingId];
+                  return (
+                    <tr key={acc.buildingId} className="hover:bg-slate-50">
+                      <td className="p-3 font-bold text-slate-900">
+                        {acc.buildingNameAr} ({acc.buildingId})
+                      </td>
+                      <td className="p-3 text-slate-600">{acc.leaderName}</td>
+                      <td className="p-3 font-mono">
+                        <div className="inline-flex items-center gap-2 bg-slate-100 px-2.5 py-1 rounded border border-slate-200 text-slate-800">
+                          <span>{realCode || '••••••••'}</span>
+                          {realCode && (
+                            <button
+                              onClick={() => handleCopy(realCode)}
+                              className="hover:text-blue-600"
+                              title="نسخ الكود"
+                            >
+                              {copiedCode === realCode ? (
+                                <Check className="w-3.5 h-3.5 text-emerald-600" />
+                              ) : (
+                                <Copy className="w-3.5 h-3.5" />
+                              )}
+                            </button>
                           )}
+                        </div>
+                      </td>
+                      <td className="p-3 text-center">
+                        <button
+                          onClick={() => handleImpersonate(acc.buildingId)}
+                          className="px-3 py-1.5 bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white border border-blue-200 rounded-xl font-bold transition inline-flex items-center gap-1.5"
+                        >
+                          <UserCheck className="w-3.5 h-3.5" />
+                          <span>تقمص دور رائد المبنى</span>
                         </button>
-                      </div>
-                    </td>
-                    <td className="p-3 text-center">
-                      <button
-                        onClick={() => handleImpersonate(acc.buildingId)}
-                        className="px-3 py-1.5 bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white border border-blue-200 rounded-xl font-bold transition inline-flex items-center gap-1.5"
-                      >
-                        <UserCheck className="w-3.5 h-3.5" />
-                        <span>تقمص دور رائد المبنى</span>
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
