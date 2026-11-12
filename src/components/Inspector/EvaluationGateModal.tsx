@@ -7,7 +7,7 @@ import React, { useState } from 'react';
 import { FixtureEvaluation } from '../../types/hostel';
 import { evaluateClosedTicket } from '../../services/firestoreService';
 import { compressAndWatermarkImage } from '../../utils/imageCompressor';
-import { DEFECT_TAGS } from '../../config/facilityTemplates';
+import { DEFECT_TAGS, getZoneNameAr } from '../../config/facilityTemplates';
 import { ImageViewerModal } from '../Common/ImageViewerModal';
 import {
   Star,
@@ -140,7 +140,7 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2">
               <div className="flex items-center gap-2">
                 <span className="px-2.5 py-1 rounded-lg bg-slate-900 text-white font-bold">
-                  {currentItem.buildingId} • الدور {currentItem.floor} • جناح {currentItem.wingId}
+                  {currentItem.buildingId} • الدور {currentItem.floor} • {getZoneNameAr(currentItem.wingId, false)}
                 </span>
                 <span className="font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
                   {currentItem.id}

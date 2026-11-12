@@ -41,7 +41,8 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
   const [inspectorName, setInspectorName] = useState('');
   const [leaderError, setLeaderError] = useState<string | null>(null);
 
-  // Maintenance states
+  // Maintenance / Cleaning Services states
+  const [staffTrack, setStaffTrack] = useState<'maintenance' | 'cleaning'>('maintenance');
   const [technicianName, setTechnicianName] = useState('');
   const [maintenanceCode, setMaintenanceCode] = useState('');
   const [maintenanceError, setMaintenanceError] = useState<string | null>(null);
@@ -81,13 +82,13 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
     e.preventDefault();
     setMaintenanceError(null);
 
-    const res = loginMaintenanceWithCode(maintenanceCode, technicianName);
+    const res = loginMaintenanceWithCode(maintenanceCode, technicianName, staffTrack);
     if (res.success && res.auth) {
       if (onMaintenanceLogin) {
         onMaintenanceLogin(res.auth);
       }
     } else {
-      setMaintenanceError(res.error || 'كود دخول الصيانة غير صحيح');
+      setMaintenanceError(res.error || 'كود الدخول غير صحيح');
     }
   };
 
@@ -119,10 +120,10 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
             style={{ height: '44px', width: 'auto', maxWidth: '140px', objectFit: 'contain' }}
           />
           <h1 className="text-base sm:text-lg font-bold text-slate-900 leading-snug">
-            تقييم ومتابعة مرافق مباني الإسكان الطلابي
+            برنامج الصيانة المكثفة ومتابعة المرافق والخدمات
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            جامعة الملك سعود • عمادة شؤون الطلاب • 34 مبنى سكني
+            إسكان الطلاب بجامعة الملك سعود • 34 مبنى سكني
           </p>
         </div>
 
@@ -148,7 +149,7 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            فريق الصيانة
+            الصيانة والنظافة
           </button>
           <button
             type="button"
@@ -201,34 +202,94 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
           </form>
         )}
 
-        {/* 2. Maintenance Form */}
+        {/* 2. Maintenance OR Cleaning & Pest Control Form */}
         {mode === 'maintenance' && (
           <form onSubmit={handleMaintenanceSubmit} className="flex flex-col gap-4 text-xs">
-            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-emerald-900 text-[11px] leading-relaxed">
-              <strong>بوابة الصيانة وماكسمو:</strong> تتيح استعراض البلاغات الميدانية، تسجيل رقم البلاغ في ماكسمو، إرفاق مستند البلاغ (PDF أو صورة)، وإغلاق البلاغ بعد إتمام الإصلاح.
+            {/* Sub-selector: Maintenance Account vs Cleaning/Pest Control Account */}
+            <div className="grid grid-cols-2 gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 font-bold">
+              <button
+                type="button"
+                onClick={() => {
+                  setStaffTrack('maintenance');
+                  setMaintenanceError(null);
+                }}
+                className={`py-2 px-2 rounded-lg transition ${
+                  staffTrack === 'maintenance'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-slate-700 hover:bg-white'
+                }`}
+              >
+                حساب الصيانة (4 أقسام)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setStaffTrack('cleaning');
+                  setMaintenanceError(null);
+                }}
+                className={`py-2 px-2 rounded-lg transition ${
+                  staffTrack === 'cleaning'
+                    ? 'bg-sky-600 text-white shadow-xs'
+                    : 'text-slate-700 hover:bg-white'
+                }`}
+              >
+                حساب النظافة والآفات
+              </button>
+            </div>
+
+            <div
+              className={`rounded-xl p-3 text-[11px] leading-relaxed border ${
+                staffTrack === 'cleaning'
+                  ? 'bg-sky-50 border-sky-200 text-sky-900'
+                  : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+              }`}
+            >
+              {staffTrack === 'cleaning' ? (
+                <>
+                  <strong>بوابة الخدمات (النظافة ومكافحة الحشرات والقوارض):</strong> تعرض فقط بلاغات النظافة والآفات مستقلة عن الصيانة، مع إرفاق صورة المعالجة لاعتماد رائد المبنى.
+                </>
+              ) : (
+                <>
+                  <strong>بوابة الصيانة المكثفة وماكسمو (4 أقسام):</strong> تشمل السباكة، النجارة والمدني، الكهرباء، والتكييف والمصاعد، مع إرفاق صورة الإصلاح ورقم ماكسمو.
+                </>
+              )}
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-slate-700 font-bold">اسم الفني / مسؤول الصيانة:</label>
+              <label className="text-slate-700 font-bold">
+                {staffTrack === 'cleaning'
+                  ? 'اسم مشرف / فني النظافة ومكافحة الآفات:'
+                  : 'اسم فني / مسؤول الصيانة:'}
+              </label>
               <input
                 type="text"
                 value={technicianName}
                 onChange={(e) => setTechnicianName(e.target.value)}
-                placeholder="مثال: م. خالد / فريق صيانة السباكة..."
+                placeholder={
+                  staffTrack === 'cleaning'
+                    ? 'مثال: مشرف النظافة / فريق مكافحة الآفات...'
+                    : 'مثال: م. خالد / فني السباكة والكهرباء...'
+                }
                 required
                 className="bg-slate-50 border border-slate-300 text-slate-900 rounded-xl px-3 py-2.5 placeholder-slate-400"
               />
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-slate-700 font-bold">كود دخول الصيانة:</label>
+              <label className="text-slate-700 font-bold">
+                {staffTrack === 'cleaning' ? 'كود دخول النظافة والخدمات:' : 'كود دخول الصيانة:'}
+              </label>
               <div className="relative">
                 <KeyRound className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type="password"
                   value={maintenanceCode}
                   onChange={(e) => setMaintenanceCode(e.target.value)}
-                  placeholder="أدخل كود الصيانة (الافتراضي: MAXIMO-2026)..."
+                  placeholder={
+                    staffTrack === 'cleaning'
+                      ? 'الافتراضي: CLEAN-2026 أو 2026'
+                      : 'الافتراضي: MAXIMO-2026 أو 2026'
+                  }
                   required
                   className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-xl pr-9 pl-4 py-2.5 placeholder-slate-400 font-mono"
                 />
@@ -243,10 +304,18 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
 
             <button
               type="submit"
-              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition flex items-center justify-center gap-2 shadow-sm"
+              className={`w-full py-2.5 text-white font-bold rounded-xl transition flex items-center justify-center gap-2 shadow-sm ${
+                staffTrack === 'cleaning'
+                  ? 'bg-sky-600 hover:bg-sky-700'
+                  : 'bg-emerald-600 hover:bg-emerald-700'
+              }`}
             >
               <Wrench className="w-4 h-4" />
-              <span>دخول بوابة الصيانة والبلاغات</span>
+              <span>
+                {staffTrack === 'cleaning'
+                  ? 'دخول بوابة النظافة ومكافحة الآفات'
+                  : 'دخول بوابة الصيانة المكثفة'}
+              </span>
             </button>
           </form>
         )}

@@ -24,6 +24,7 @@ import {
   FacilityMediaItem,
   MaintenanceTicketInfo,
 } from '../types/hostel';
+import { resolveEvaluationDepartment } from '../config/facilityTemplates';
 import {
   getDecodedSecurityCode,
   getAdminRawSecurityCode,
@@ -228,16 +229,24 @@ export async function saveEvaluation(
   // Manage Maintenance Ticket Lifecycle automatically when reporting an issue
   let ticket: MaintenanceTicketInfo | undefined =
     evaluation.maintenanceTicket || prevEval?.maintenanceTicket;
+  const resolvedDept = resolveEvaluationDepartment(evaluation);
 
   if (evaluation.status !== 'operational') {
     if (!ticket || ticket.status === 'verified_closed') {
       ticket = {
         status: 'open',
+        department: resolvedDept,
+      };
+    } else {
+      ticket = {
+        ...ticket,
+        department: resolvedDept,
       };
     }
   } else if (!historyOverride && ticket && ticket.status !== 'pending_evaluation') {
     ticket = {
       ...ticket,
+      department: ticket.department || resolvedDept,
       status: 'verified_closed',
       verifiedAt: nowIso,
       verifiedBy: evaluation.inspectorName || 'رائد المبنى',
@@ -546,13 +555,45 @@ export async function evaluateClosedTicket(
         action: 'leader_rejected_reopened',
         actorName: params.leaderName,
         actorRole: 'leader',
-        notes: `رفض الإغلاق وإعادة فتح البلاغ للصيانة (${params.rating}/5): ${nextTicket.lastRejectionReason}`,
+        notes: `رفض الإغلاق وإعادة فتح البلاغ (${params.rating}/5): ${nextTicket.lastRejectionReason}`,
         evaluationRating: params.rating,
         maximoNumber: prevTicket.maximoNumber,
         media: evalMedia,
       }
     );
   }
+}
+
+export async function appendFacilityChatMessage(
+  evaluation: FixtureEvaluation,
+  params: {
+    message: string;
+    actorName: string;
+    actorRole: 'leader' | 'maintenance' | 'cleaning' | 'admin';
+    photoBase64?: string;
+  }
+): Promise<CloudSaveResult> {
+  const nowIso = new Date().toISOString();
+  const chatMedia: FacilityMediaItem[] = params.photoBase64
+    ? [
+        {
+          id: `chat_${Date.now()}`,
+          type: 'image',
+          url: params.photoBase64,
+          name: 'مرفق محادثة المرفق',
+          capturedAt: nowIso,
+          capturedBy: params.actorName,
+        },
+      ]
+    : [];
+
+  return saveEvaluation(evaluation, {
+    action: 'chat_message',
+    actorName: params.actorName,
+    actorRole: params.actorRole,
+    notes: params.message.trim(),
+    media: chatMedia,
+  });
 }
 
 // ----------------------------------------------------------------------------

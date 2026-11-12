@@ -1,21 +1,29 @@
 // ============================================================================
-// 🔧 بوابة الصيانة ونظام ماكسمو (Maintenance & Maximo Portal)
-// تتيح لفريق الصيانة استعراض البلاغات، نسخ متطلبات ماكسمو، تسجيل رقم البلاغ،
-// رفع مرفق البلاغ (PDF أو صورة)، وإغلاق البلاغ مع تفعيل رابط التقييم الإلزامي للرائد
+// 🔧 بوابة الصيانة المكثفة (الأقسام الأربعة) وبوابة النظافة ومكافحة الآفات
+// تدعم: فصل مسار الصيانة عن النظافة تماماً، فلترة الأقسام الأربعة، عرض ثنائي اللغة
+// (عربي / English) لتجاوز تعدد الجنسيات، إرفاق صورة الإصلاح، ومحادثة المرفق المستمرة
 // ============================================================================
 
 import React, { useState } from 'react';
 import {
   BuildingInfo,
   FixtureEvaluation,
+  ServiceDepartment,
+  FacilityHistoryEvent,
 } from '../../types/hostel';
 import {
   DEFECT_TAGS,
+  SERVICE_DEPARTMENTS,
   loadActiveFacilityCategories,
+  resolveEvaluationDepartment,
+  isCleaningOrPestTicket,
+  getZoneNameAr,
+  getZoneNameEn,
 } from '../../config/facilityTemplates';
 import {
   updateMaximoTicketInfo,
   closeMaintenanceTicket,
+  appendFacilityChatMessage,
 } from '../../services/firestoreService';
 import { processFacilityMediaFile, compressAndWatermarkImage } from '../../utils/imageCompressor';
 import { ImageViewerModal } from '../Common/ImageViewerModal';
@@ -36,6 +44,9 @@ import {
   Star,
   Clock,
   Trash2,
+  MessageSquare,
+  Send,
+  Sparkles,
   X,
 } from 'lucide-react';
 
@@ -43,6 +54,8 @@ interface MaintenancePortalProps {
   buildings: BuildingInfo[];
   allEvaluations: FixtureEvaluation[];
   technicianName: string;
+  portalRole?: 'maintenance' | 'cleaning';
+  isAdmin?: boolean;
   onRefreshEvaluations: () => void;
 }
 
@@ -50,8 +63,13 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
   buildings,
   allEvaluations,
   technicianName,
+  portalRole = 'maintenance',
+  isAdmin = false,
   onRefreshEvaluations,
 }) => {
+  // Admin can toggle between Maintenance Portal and Cleaning/Pest Portal; staff are locked to their own portal
+  const [activeTrack, setActiveTrack] = useState<'maintenance' | 'cleaning'>(portalRole);
+  const [selectedDepartment, setSelectedDepartment] = useState<'ALL' | ServiceDepartment>('ALL');
   const [selectedBuildingId, setSelectedBuildingId] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<
     'active' | 'reopened' | 'pending_eval' | 'verified' | 'all'
@@ -79,22 +97,67 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
   const [isProcessingClosureFile, setIsProcessingClosureFile] = useState<boolean>(false);
   const [isSubmittingClosure, setIsSubmittingClosure] = useState<boolean>(false);
 
+  // Facility Chat Thread Modal State for Technicians
+  const [chatItem, setChatItem] = useState<FixtureEvaluation | null>(null);
+  const [chatText, setChatText] = useState<string>('');
+  const [chatPhotoBase64, setChatPhotoBase64] = useState<string | undefined>(undefined);
+  const [isSendingChat, setIsSendingChat] = useState<boolean>(false);
+
+  React.useEffect(() => {
+    setActiveTrack(portalRole);
+    setSelectedDepartment('ALL');
+  }, [portalRole]);
+
+  const isCleaningMode = activeTrack === 'cleaning';
   const categories = React.useMemo(() => loadActiveFacilityCategories(), []);
 
-  const getFixtureNameAr = (item: FixtureEvaluation): string => {
+  const getFixtureBilingualName = (
+    item: FixtureEvaluation
+  ): { ar: string; en: string } => {
     const cat = categories.find((c) => c.code === item.categoryCode);
     const tmpl =
       cat?.wingTemplates[item.wingId]?.find((t) => t.typeCode === item.fixtureTypeCode) ||
       cat?.wingTemplates[1]?.find((t) => t.typeCode === item.fixtureTypeCode);
-    return tmpl ? `${tmpl.nameAr} (#${item.fixtureIndex})` : `${item.fixtureTypeCode} (#${item.fixtureIndex})`;
+    return {
+      ar: tmpl
+        ? `${tmpl.nameAr} (#${item.fixtureIndex})`
+        : `${item.fixtureTypeCode} (#${item.fixtureIndex})`,
+      en: tmpl
+        ? `${tmpl.nameEn} (#${item.fixtureIndex})`
+        : `${item.fixtureTypeCode} (#${item.fixtureIndex})`,
+    };
   };
 
-  // All reports that are either non-operational or have a maintenanceTicket record
-  const allTickets = React.useMemo(() => {
+  // Strict Track Isolation: Cleaning portal ONLY sees Cleaning/Pest tickets; Maintenance portal ONLY sees Maintenance tickets
+  const trackTickets = React.useMemo(() => {
     return allEvaluations
-      .filter((e) => !e.isDeleted && (e.status !== 'operational' || e.maintenanceTicket))
+      .filter((e) => {
+        if (e.isDeleted) return false;
+        if (e.status === 'operational' && !e.maintenanceTicket) return false;
+        const isCln = isCleaningOrPestTicket(e);
+        return isCleaningMode ? isCln : !isCln;
+      })
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-  }, [allEvaluations]);
+  }, [allEvaluations, isCleaningMode]);
+
+  // Department counts for tabs
+  const departmentCounts = React.useMemo(() => {
+    const map: Record<string, number> = {
+      ALL: 0,
+      plumbing: 0,
+      carpentry_civil: 0,
+      electrical: 0,
+      hvac_mechanical: 0,
+      cleaning: 0,
+      pest_control: 0,
+    };
+    for (const t of trackTickets) {
+      const dept = resolveEvaluationDepartment(t);
+      map.ALL++;
+      map[dept] = (map[dept] || 0) + 1;
+    }
+    return map;
+  }, [trackTickets]);
 
   const counts = React.useMemo(() => {
     let active = 0;
@@ -102,18 +165,29 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
     let pendingEval = 0;
     let verified = 0;
 
-    for (const t of allTickets) {
-      const st = t.maintenanceTicket?.status || (t.status !== 'operational' ? 'open' : 'verified_closed');
+    for (const t of trackTickets) {
+      if (selectedDepartment !== 'ALL' && resolveEvaluationDepartment(t) !== selectedDepartment) {
+        continue;
+      }
+      const st =
+        t.maintenanceTicket?.status || (t.status !== 'operational' ? 'open' : 'verified_closed');
       if (st === 'reopened') reopened++;
       else if (st === 'pending_evaluation') pendingEval++;
       else if (st === 'verified_closed' || t.status === 'operational') verified++;
       else active++;
     }
-    return { active, reopened, pendingEval, verified, total: allTickets.length };
-  }, [allTickets]);
+    return { active, reopened, pendingEval, verified, total: active + reopened + pendingEval + verified };
+  }, [trackTickets, selectedDepartment]);
 
   const filteredTickets = React.useMemo(() => {
-    return allTickets.filter((item) => {
+    return trackTickets.filter((item) => {
+      if (
+        selectedDepartment !== 'ALL' &&
+        resolveEvaluationDepartment(item) !== selectedDepartment
+      ) {
+        return false;
+      }
+
       if (selectedBuildingId !== 'ALL' && item.buildingId !== selectedBuildingId) {
         return false;
       }
@@ -142,24 +216,30 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
 
       return true;
     });
-  }, [allTickets, selectedBuildingId, statusFilter, searchQuery]);
+  }, [trackTickets, selectedDepartment, selectedBuildingId, statusFilter, searchQuery]);
 
-  // Format Maximo clipboard summary so maintenance can paste directly into Maximo
-  const handleCopyForMaximo = (item: FixtureEvaluation) => {
+  // Format bilingual summary so technicians or Maximo operators can copy it in 1 click
+  const handleCopyTicketSummary = (item: FixtureEvaluation) => {
     const defectLabels = (item.defects || [])
-      .map((d) => DEFECT_TAGS.find((t) => t.id === d)?.labelAr || d)
+      .map((d) => {
+        const tag = DEFECT_TAGS.find((t) => t.id === d);
+        return tag ? `${tag.labelAr} (${tag.labelEn})` : d;
+      })
       .join(' ، ');
-    const fixtureName = getFixtureNameAr(item);
-    const priority = item.status === 'broken' ? 'طارئ / حرج (عاطل)' : 'صيانة اعتيادية';
+    const names = getFixtureBilingualName(item);
+    const dept = SERVICE_DEPARTMENTS[resolveEvaluationDepartment(item)];
+    const priority =
+      item.status === 'broken' ? 'طارئ / Urgent' : 'صيانة مكثفة / Standard';
 
     const text = [
-      `بلاغ صيانة مرافق الإسكان الطلابي - جامعة الملك سعود`,
+      `برنامج الصيانة المكثفة ومتابعة المرافق - الإسكان الطلابي بجامعة الملك سعود`,
+      `القسم المختص: ${dept.nameAr} (${dept.nameEn})`,
       `المبنى: مبنى ${item.buildingId.replace('B', '')} (${item.buildingId})`,
-      `الموقع الدقيق: الدور ${item.floor} - جناح ${item.wingId}`,
-      `المرفق: ${fixtureName} [${item.id}]`,
+      `الموقع: الدور ${item.floor} - ${getZoneNameAr(item.wingId)} (${getZoneNameEn(item.wingId)})`,
+      `المرفق: ${names.ar} / ${names.en} [${item.id}]`,
       `الأولوية: ${priority}`,
       `الأعطال المرصودة: ${defectLabels || 'خلل تشغيلي'}`,
-      item.notes ? `ملاحظات الفاحص: ${item.notes}` : '',
+      item.notes ? `توضيح إضافي: ${item.notes}` : '',
     ]
       .filter(Boolean)
       .join('\n');
@@ -182,7 +262,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
         ? maximoInputs[item.id]
         : item.maintenanceTicket?.maximoNumber || '';
     if (!val.trim()) {
-      alert('يرجى إدخال رقم البلاغ في ماكسمو أولاً');
+      alert('يرجى إدخال رقم البلاغ أولاً');
       return;
     }
 
@@ -226,7 +306,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
       });
       onRefreshEvaluations();
     } catch (err: any) {
-      alert(err?.message || 'حدث خطأ أثناء رفع مرفق ماكسمو');
+      alert(err?.message || 'حدث خطأ أثناء رفع المرفق');
     } finally {
       setUploadingAttachmentId(null);
       e.target.value = '';
@@ -294,7 +374,11 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
         attachmentBase64: closureAttachment?.base64,
         attachmentName: closureAttachment?.name,
         attachmentType: closureAttachment?.type,
-        closureNotes: closureNotes.trim() || 'تم إتمام الإصلاح وإغلاق البلاغ',
+        closureNotes:
+          closureNotes.trim() ||
+          (isCleaningMode
+            ? 'تم تنفيذ أعمال النظافة / المكافحة وإغلاق البلاغ'
+            : 'تم إتمام الإصلاح وإغلاق البلاغ'),
         closurePhotoBase64,
         actorName: technicianName,
       });
@@ -307,20 +391,126 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
     }
   };
 
+  const handleSendTechChat = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatItem || (!chatText.trim() && !chatPhotoBase64)) return;
+
+    setIsSendingChat(true);
+    try {
+      await appendFacilityChatMessage(chatItem, {
+        message: chatText.trim() || 'صورة تحديث من الفني المختص',
+        actorName: technicianName,
+        actorRole: isCleaningMode ? 'cleaning' : 'maintenance',
+        photoBase64: chatPhotoBase64,
+      });
+      setChatText('');
+      setChatPhotoBase64(undefined);
+      onRefreshEvaluations();
+    } finally {
+      setIsSendingChat(false);
+    }
+  };
+
+  const handleTechChatPhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !chatItem) return;
+    try {
+      const res = await compressAndWatermarkImage(file, {
+        fixtureId: chatItem.id,
+        inspectorName: technicianName,
+      });
+      setChatPhotoBase64(res.base64);
+    } catch {
+      alert('تعذر ضغط الصورة');
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const maintenanceDeptTabs: { id: 'ALL' | ServiceDepartment; labelAr: string; labelEn: string }[] = [
+    { id: 'ALL', labelAr: 'جميع أقسام الصيانة', labelEn: 'All Maintenance Depts' },
+    { id: 'plumbing', labelAr: 'قسم السباكة', labelEn: 'Plumbing' },
+    { id: 'carpentry_civil', labelAr: 'قسم النجارة والمدني', labelEn: 'Carpentry & Civil' },
+    { id: 'electrical', labelAr: 'قسم الكهرباء', labelEn: 'Electrical' },
+    {
+      id: 'hvac_mechanical',
+      labelAr: 'التكييف والميكانيكا والمصاعد',
+      labelEn: 'HVAC, Mech & Elevators',
+    },
+  ];
+
+  const cleaningDeptTabs: { id: 'ALL' | ServiceDepartment; labelAr: string; labelEn: string }[] = [
+    { id: 'ALL', labelAr: 'جميع بلاغات الخدمات', labelEn: 'All Services' },
+    { id: 'cleaning', labelAr: 'النظافة العامة والتعقيم', labelEn: 'General Cleaning' },
+    { id: 'pest_control', labelAr: 'مكافحة الحشرات والقوارض', labelEn: 'Pest & Rodent Control' },
+  ];
+
+  const activeDeptTabs = isCleaningMode ? cleaningDeptTabs : maintenanceDeptTabs;
+
+  // Keep chatItem fresh when evaluations update
+  const liveChatItem = React.useMemo(() => {
+    if (!chatItem) return null;
+    return allEvaluations.find((e) => e.id === chatItem.id) || chatItem;
+  }, [chatItem, allEvaluations]);
+
   return (
-    <div className="flex flex-col gap-5 max-w-6xl mx-auto pb-20 sm:pb-8">
+    <div className="flex flex-col gap-4 max-w-6xl mx-auto pb-20 sm:pb-8">
+      {/* Admin Track Switcher (if logged in as Admin) */}
+      {isAdmin && (
+        <div className="bg-slate-900 text-white rounded-2xl p-3 flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs font-bold text-slate-300">
+            وضع المشرف العام — اختر البوابة المراد استعراضها:
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTrack('maintenance');
+                setSelectedDepartment('ALL');
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                !isCleaningMode ? 'bg-emerald-500 text-slate-950' : 'bg-white/10 text-white'
+              }`}
+            >
+              بوابة الصيانة المكثفة وماكسمو (4 أقسام)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTrack('cleaning');
+                setSelectedDepartment('ALL');
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                isCleaningMode ? 'bg-sky-400 text-slate-950' : 'bg-white/10 text-white'
+              }`}
+            >
+              بوابة النظافة ومكافحة الحشرات والقوارض
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 1. Header Banner */}
       <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
-            <Wrench className="w-5 h-5" />
+          <div
+            className={`w-11 h-11 rounded-2xl text-white flex items-center justify-center shrink-0 shadow-xs ${
+              isCleaningMode ? 'bg-sky-600' : 'bg-emerald-600'
+            }`}
+          >
+            {isCleaningMode ? <Sparkles className="w-5 h-5" /> : <Wrench className="w-5 h-5" />}
           </div>
           <div>
             <h1 className="text-base sm:text-lg font-bold text-slate-900">
-              بوابة الصيانة ونظام ماكسمو (Maximo)
+              {isCleaningMode
+                ? 'بوابة الخدمات: النظافة ومكافحة الحشرات والقوارض (Cleaning & Pest Control)'
+                : 'بوابة الصيانة المكثفة ونظام ماكسمو (Intensive Maintenance & Maximo)'}
             </h1>
             <p className="text-xs text-slate-500 mt-0.5">
-              المسؤول النشط: <strong className="text-slate-800">{technicianName}</strong> • نسخ متطلبات ماكسمو، إرفاق رقم وصورة/PDF البلاغ، وإغلاق البلاغات
+              المسؤول النشط: <strong className="text-slate-800">{technicianName}</strong> •{' '}
+              {isCleaningMode
+                ? 'معالجة بلاغات النظافة والحشرات والقوارض وإرفاق صورة الإنجاز لاعتماد رائد المبنى'
+                : 'فلترة الأقسام الأربعة، عرض ثنائي اللغة (عربي / English)، وإرفاق صورة الإصلاح لاعتماد الرائد'}
             </p>
           </div>
         </div>
@@ -331,13 +521,13 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
             <span className="block font-black text-amber-800 font-mono text-base">
               {counts.active + counts.reopened}
             </span>
-            <span className="text-[10px] text-amber-700 font-bold">بلاغات مفتوحة</span>
+            <span className="text-[10px] text-amber-700 font-bold">بلاغات نشطة / Active</span>
           </div>
           <div className="bg-purple-50 border border-purple-200 px-3 py-2 rounded-xl text-center">
             <span className="block font-black text-purple-800 font-mono text-base">
               {counts.pendingEval}
             </span>
-            <span className="text-[10px] text-purple-700 font-bold">بانتظار تقييم الرائد</span>
+            <span className="text-[10px] text-purple-700 font-bold">بانتظار اعتماد الرائد</span>
           </div>
           <div className="bg-emerald-50 border border-emerald-200 px-3 py-2 rounded-xl text-center">
             <span className="block font-black text-emerald-800 font-mono text-base">
@@ -348,7 +538,41 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
         </div>
       </div>
 
-      {/* 2. Filters Bar */}
+      {/* 2. Department Filter Bar (4 Maintenance Departments OR 2 Cleaning/Pest Departments) */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-3 shadow-xs flex items-center gap-2 overflow-x-auto no-scrollbar">
+        {activeDeptTabs.map((tab) => {
+          const isSelected = selectedDepartment === tab.id;
+          const count = departmentCounts[tab.id] || 0;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setSelectedDepartment(tab.id)}
+              className={`px-3.5 py-2 rounded-xl border text-right transition shrink-0 flex items-center gap-2.5 ${
+                isSelected
+                  ? 'bg-slate-900 border-slate-900 text-white shadow-xs'
+                  : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              <div>
+                <div className="text-xs font-bold">{tab.labelAr}</div>
+                <div className={`text-[10px] ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
+                  {tab.labelEn}
+                </div>
+              </div>
+              <span
+                className={`px-2 py-0.5 rounded-lg text-xs font-mono font-black ${
+                  isSelected ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-800'
+                }`}
+              >
+                {count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* 3. Status & Building Filters Bar */}
       <div className="bg-white border border-slate-200 rounded-2xl p-3.5 shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
         {/* Status Tabs */}
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 md:pb-0">
@@ -361,7 +585,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
-            قيد العمل ({counts.active + counts.reopened})
+            قيد العمل / Active ({counts.active + counts.reopened})
           </button>
 
           {counts.reopened > 0 && (
@@ -375,7 +599,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
               }`}
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span>معاد فتحه ({counts.reopened})</span>
+              <span>معاد فتحه / Reopened ({counts.reopened})</span>
             </button>
           )}
 
@@ -388,7 +612,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
-            بانتظار تقييم الرائد ({counts.pendingEval})
+            بانتظار اعتماد الرائد ({counts.pendingEval})
           </button>
 
           <button
@@ -425,7 +649,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
               onChange={(e) => setSelectedBuildingId(e.target.value)}
               className="bg-transparent text-xs font-bold text-slate-900 focus:outline-none cursor-pointer"
             >
-              <option value="ALL">جميع المباني (34)</option>
+              <option value="ALL">جميع المباني (34 Buildings)</option>
               {buildings.map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.nameAr} ({b.id})
@@ -447,13 +671,15 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
         </div>
       </div>
 
-      {/* 3. Tickets List */}
+      {/* 4. Tickets List */}
       {filteredTickets.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center text-slate-500">
           <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
-          <p className="text-sm font-bold text-slate-800">لا توجد بلاغات مطابقة للفلتر المحدد</p>
+          <p className="text-sm font-bold text-slate-800">
+            لا توجد بلاغات مطابقة للفلتر المحدد / No Matching Tickets
+          </p>
           <p className="text-xs text-slate-500 mt-1">
-            جميع البلاغات الميدانية التي يرصدها رواد المباني تظهر هنا فوراً مع متطلبات ماكسمو.
+            أي مرفق يسجله رائد المبنى كغير سليم يظهر هنا تلقائياً مع موقع المرفق وصورة العطل والترجمة الإنجليزية.
           </p>
         </div>
       ) : (
@@ -462,7 +688,9 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
             const ticket = item.maintenanceTicket;
             const ticketStatus =
               ticket?.status || (item.status !== 'operational' ? 'open' : 'verified_closed');
-            const fixtureName = getFixtureNameAr(item);
+            const names = getFixtureBilingualName(item);
+            const deptKey = resolveEvaluationDepartment(item);
+            const deptInfo = SERVICE_DEPARTMENTS[deptKey];
             const currentMaxInput =
               maximoInputs[item.id] !== undefined
                 ? maximoInputs[item.id]
@@ -472,7 +700,14 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
               item.media && item.media.length > 0
                 ? item.media
                 : item.photoBase64
-                ? [{ id: 'p0', type: 'image' as const, url: item.photoBase64, capturedAt: item.updatedAt }]
+                ? [
+                    {
+                      id: 'p0',
+                      type: 'image' as const,
+                      url: item.photoBase64,
+                      capturedAt: item.updatedAt,
+                    },
+                  ]
                 : [];
 
             return (
@@ -488,13 +723,19 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                     : 'border-slate-200'
                 }`}
               >
-                {/* Top Section: Location, Status Badge & Copy for Maximo */}
+                {/* Top Section: Bilingual Location, Department Badge, Chat Button & Copy */}
                 <div className="flex flex-col gap-2.5">
                   <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-100 pb-2.5">
                     <div>
-                      <div className="flex items-center gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-xs font-bold">
-                          مبنى {item.buildingId.replace('B', '')} ({item.buildingId}) • الدور {item.floor} • جناح {item.wingId}
+                          مبنى {item.buildingId.replace('B', '')} ({item.buildingId}) • الدور{' '}
+                          {item.floor} • {getZoneNameAr(item.wingId, true)}
+                        </span>
+                        <span
+                          className={`text-[11px] px-2 py-0.5 rounded-lg font-bold border ${deptInfo.badgeClass}`}
+                        >
+                          {deptInfo.nameAr} • {deptInfo.nameEn}
                         </span>
                         <span
                           className={`text-[11px] px-2 py-0.5 rounded-lg font-bold ${
@@ -510,41 +751,60 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                           }`}
                         >
                           {ticketStatus === 'reopened'
-                            ? 'معاد فتحه (رفض إغلاق صوري) 🔄'
+                            ? 'معاد فتحه / Reopened 🔄'
                             : ticketStatus === 'pending_evaluation'
-                            ? 'مغلق - بانتظار تقييم الرائد ⭐'
+                            ? 'بانتظار اعتماد الرائد ⭐'
                             : ticketStatus === 'verified_closed'
-                            ? 'مغلق ومعتمد ✅'
+                            ? 'معتمد ✅'
                             : ticketStatus === 'in_progress'
-                            ? 'مسجل بماكسمو (قيد الإصلاح)'
-                            : 'بلاغ جديد (بانتظار ماكسمو)'}
+                            ? 'قيد التنفيذ / In Progress'
+                            : 'بلاغ جديد / Open'}
                         </span>
                       </div>
-                      <h3 className="text-sm font-bold text-slate-900 mt-1.5">
-                        {fixtureName}{' '}
-                        <span className="text-xs font-mono text-slate-500">({item.id})</span>
-                      </h3>
+
+                      <div className="mt-1.5">
+                        <h3 className="text-sm font-bold text-slate-900">
+                          {names.ar}{' '}
+                          <span className="text-xs font-mono text-slate-500">({item.id})</span>
+                        </h3>
+                        <p className="text-xs font-semibold text-slate-500">
+                          Building {item.buildingId.replace('B', '')} • Floor {item.floor} •{' '}
+                          {getZoneNameEn(item.wingId)} — {names.en}
+                        </p>
+                      </div>
                     </div>
 
-                    {/* 1-Click Copy for Maximo */}
-                    <button
-                      type="button"
-                      onClick={() => handleCopyForMaximo(item)}
-                      className="px-2.5 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[11px] font-bold flex items-center gap-1 transition shrink-0"
-                      title="نسخ تفاصيل البلاغ جاهزة للصق في نظام ماكسمو"
-                    >
-                      {copiedId === item.id ? (
-                        <>
-                          <Check className="w-3.5 h-3.5 text-emerald-600" />
-                          <span className="text-emerald-700">تم النسخ لماكسمو ✓</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3.5 h-3.5" />
-                          <span>نسخ لماكسمو</span>
-                        </>
-                      )}
-                    </button>
+                    {/* Chat Thread Button + Copy Summary Button */}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setChatItem(item)}
+                        className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 text-[11px] font-bold flex items-center gap-1 transition"
+                        title="فتح شريط محادثة وتحديثات المرفق"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5 text-blue-600" />
+                        <span>المحادثة ({(item.history || []).length})</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleCopyTicketSummary(item)}
+                        className="px-2.5 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[11px] font-bold flex items-center gap-1 transition"
+                        title="نسخ تفاصيل البلاغ"
+                      >
+                        {copiedId === item.id ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                            <span className="text-emerald-700">تم النسخ ✓</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>نسخ</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
 
                   {/* Reopened Rejection Alert if Leader rejected closure */}
@@ -552,7 +812,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                     <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-900 flex flex-col gap-1">
                       <span className="font-bold flex items-center gap-1 text-rose-700">
                         <AlertTriangle className="w-4 h-4" />
-                        <span>سبب رفض الإغلاق من رائد المبنى:</span>
+                        <span>سبب رفض الإغلاق من رائد المبنى (Reopened by Leader):</span>
                       </span>
                       <p>{ticket.lastRejectionReason}</p>
                       {ticket.lastRejectionPhotoBase64 && (
@@ -567,35 +827,42 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                     </div>
                   )}
 
-                  {/* Defects & Notes */}
+                  {/* Bilingual Defects Chips (Arabic + English) */}
                   <div className="flex flex-wrap gap-1.5">
                     {item.defects.map((d) => {
                       const tag = DEFECT_TAGS.find((t) => t.id === d);
                       return (
-                        <span
+                        <div
                           key={d}
-                          className="text-xs px-2.5 py-0.5 rounded-lg bg-slate-100 text-slate-800 border border-slate-200 font-bold"
+                          className="px-2.5 py-1 rounded-xl bg-rose-50/70 text-slate-900 border border-rose-200 flex flex-col"
                         >
-                          {tag ? tag.labelAr : d}
-                        </span>
+                          <span className="text-xs font-bold text-rose-900">
+                            {tag ? tag.labelAr : d}
+                          </span>
+                          {tag?.labelEn && (
+                            <span className="text-[10px] font-semibold text-slate-600">
+                              {tag.labelEn}
+                            </span>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
 
                   {item.notes && (
                     <p className="text-xs text-slate-700 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-                      {item.notes}
+                      <strong>توضيح إضافي / Note:</strong> {item.notes}
                     </p>
                   )}
 
-                  {/* Inspector Media Strip */}
-                  {mediaItems.length > 0 && (
+                  {/* Inspector Before-Media Strip + Technician After-Photo if available */}
+                  {(mediaItems.length > 0 || ticket?.closurePhotoBase64) && (
                     <div className="flex items-center gap-2 overflow-x-auto py-1">
                       {mediaItems.map((m) => (
                         <div
                           key={m.id}
                           onClick={() => m.type === 'image' && setPreviewImage(m.url)}
-                          className="w-16 h-16 rounded-xl overflow-hidden border border-slate-200 bg-slate-100 shrink-0 cursor-pointer"
+                          className="relative w-16 h-16 rounded-xl overflow-hidden border border-slate-300 bg-slate-100 shrink-0 cursor-pointer"
                         >
                           {m.type === 'image' ? (
                             <img src={m.url} alt="" className="w-full h-full object-cover" />
@@ -604,58 +871,78 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                               {m.type.toUpperCase()}
                             </div>
                           )}
+                          <span className="absolute bottom-0 inset-x-0 bg-slate-900/75 text-white text-[9px] text-center py-0.5 font-bold">
+                            قبل / Before
+                          </span>
                         </div>
                       ))}
+
+                      {ticket?.closurePhotoBase64 && (
+                        <div
+                          onClick={() => setPreviewImage(ticket.closurePhotoBase64 || null)}
+                          className="relative w-16 h-16 rounded-xl overflow-hidden border-2 border-emerald-500 bg-emerald-50 shrink-0 cursor-pointer"
+                        >
+                          <img
+                            src={ticket.closurePhotoBase64}
+                            alt="After"
+                            className="w-full h-full object-cover"
+                          />
+                          <span className="absolute bottom-0 inset-x-0 bg-emerald-700 text-white text-[9px] text-center py-0.5 font-bold">
+                            بعد / After
+                          </span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
 
-                {/* Bottom Section: Maximo Number, Attachment (PDF/Image), and Close Button */}
+                {/* Bottom Section: Maximo Number (for Maintenance) & Close with Fix Photo */}
                 <div className="pt-3 border-t border-slate-200 flex flex-col gap-2.5 bg-slate-50/70 -mx-4 -mb-4 p-4 rounded-b-2xl">
-                  {/* Maximo Ticket # + Attachment Row */}
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <div className="flex-1 flex gap-1.5">
-                      <input
-                        type="text"
-                        value={currentMaxInput}
-                        onChange={(e) =>
-                          setMaximoInputs((prev) => ({ ...prev, [item.id]: e.target.value }))
-                        }
-                        placeholder="رقم البلاغ في ماكسمو (مثال: MX-99421)..."
-                        className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-900 focus:border-blue-500 focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        disabled={savingTicketId === item.id}
-                        onClick={() => handleSaveMaximoNumber(item)}
-                        className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shrink-0 transition"
-                      >
-                        {savingTicketId === item.id ? '...' : 'حفظ الرقم'}
-                      </button>
-                    </div>
+                  {/* Maximo Ticket # + Attachment Row (Shown only for Maintenance track) */}
+                  {!isCleaningMode && (
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <div className="flex-1 flex gap-1.5">
+                        <input
+                          type="text"
+                          value={currentMaxInput}
+                          onChange={(e) =>
+                            setMaximoInputs((prev) => ({ ...prev, [item.id]: e.target.value }))
+                          }
+                          placeholder="رقم البلاغ في ماكسمو (Maximo #)..."
+                          className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-900 focus:border-blue-500 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          disabled={savingTicketId === item.id}
+                          onClick={() => handleSaveMaximoNumber(item)}
+                          className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shrink-0 transition"
+                        >
+                          {savingTicketId === item.id ? '...' : 'حفظ الرقم'}
+                        </button>
+                      </div>
 
-                    {/* Upload PDF or Image of Maximo Ticket */}
-                    <label className="cursor-pointer px-3 py-2 bg-white hover:bg-blue-50 text-blue-700 border border-blue-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shrink-0 transition">
-                      <input
-                        type="file"
-                        accept="application/pdf,image/*"
-                        onChange={(e) => handleUploadMaximoAttachment(item, e)}
-                        className="hidden"
-                        disabled={uploadingAttachmentId === item.id}
-                      />
-                      <Upload className="w-3.5 h-3.5" />
-                      <span>
-                        {uploadingAttachmentId === item.id
-                          ? 'جاري الرفع...'
-                          : ticket?.maximoAttachmentBase64
-                          ? 'تحديث مرفق البلاغ'
-                          : 'رفع PDF / صورة البلاغ'}
-                      </span>
-                    </label>
-                  </div>
+                      <label className="cursor-pointer px-3 py-2 bg-white hover:bg-blue-50 text-blue-700 border border-blue-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shrink-0 transition">
+                        <input
+                          type="file"
+                          accept="application/pdf,image/*"
+                          onChange={(e) => handleUploadMaximoAttachment(item, e)}
+                          className="hidden"
+                          disabled={uploadingAttachmentId === item.id}
+                        />
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>
+                          {uploadingAttachmentId === item.id
+                            ? 'جاري الرفع...'
+                            : ticket?.maximoAttachmentBase64
+                            ? 'تحديث مرفق البلاغ'
+                            : 'رفع PDF / صورة البلاغ'}
+                        </span>
+                      </label>
+                    </div>
+                  )}
 
                   {/* Display existing Maximo Attachment if uploaded */}
-                  {ticket?.maximoAttachmentBase64 && (
+                  {!isCleaningMode && ticket?.maximoAttachmentBase64 && (
                     <div className="flex items-center justify-between bg-blue-50/80 border border-blue-200 rounded-xl px-3 py-1.5 text-xs">
                       <div className="flex items-center gap-1.5 text-blue-900 font-bold truncate">
                         {ticket.maximoAttachmentType === 'pdf' ? (
@@ -670,7 +957,9 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                       {ticket.maximoAttachmentType === 'pdf' ? (
                         <a
                           href={ticket.maximoAttachmentBase64}
-                          download={ticket.maximoAttachmentName || `Maximo_${ticket.maximoNumber}.pdf`}
+                          download={
+                            ticket.maximoAttachmentName || `Maximo_${ticket.maximoNumber}.pdf`
+                          }
                           className="text-blue-700 font-bold underline shrink-0 mr-2"
                         >
                           تحميل PDF
@@ -687,12 +976,12 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                     </div>
                   )}
 
-                  {/* Action Row: Close Ticket OR Copy Mandatory Evaluation Link */}
+                  {/* Action Row: Close Ticket with Fix Image OR Copy Mandatory Evaluation Link */}
                   {ticketStatus === 'pending_evaluation' ? (
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 pt-1">
                       <span className="text-[11px] font-bold text-purple-800 flex items-center gap-1">
                         <Clock className="w-3.5 h-3.5 text-purple-600" />
-                        <span>مغلق من الصيانة — يلزم تقييم رائد {item.buildingId}</span>
+                        <span>مغلق — بانتظار معاينة واعتماد رائد {item.buildingId}</span>
                       </span>
 
                       <button
@@ -703,12 +992,12 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                         {copiedLinkId === item.id ? (
                           <>
                             <Check className="w-3.5 h-3.5" />
-                            <span>تم نسخ رابط التقييم ✓</span>
+                            <span>تم نسخ رابط الاعتماد ✓</span>
                           </>
                         ) : (
                           <>
                             <Link2 className="w-3.5 h-3.5" />
-                            <span>نسخ رابط تقييم الخدمة للرائد</span>
+                            <span>نسخ رابط الاعتماد لرائد المبنى</span>
                           </>
                         )}
                       </button>
@@ -732,8 +1021,10 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                       onClick={() => openCloseModal(item)}
                       className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition"
                     >
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>إغلاق البلاغ بعد إتمام الصيانة (تحويل لتقييم الرائد)</span>
+                      <Camera className="w-4 h-4" />
+                      <span>
+                        إرفاق صورة الإصلاح وإغلاق البلاغ (Attach Fix Photo & Close)
+                      </span>
                     </button>
                   )}
                 </div>
@@ -743,7 +1034,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
         </div>
       )}
 
-      {/* Modal to Close Ticket & Request Mandatory Leader Evaluation */}
+      {/* Modal to Attach Fix Photo & Close Ticket */}
       {closingItem && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border border-slate-200 shadow-2xl p-5 flex flex-col gap-4 animate-in zoom-in-95 duration-150">
@@ -751,7 +1042,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
               <div>
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span>إغلاق البلاغ وطلب تقييم رائد المبنى</span>
+                  <span>إرفاق صورة الإصلاح وإغلاق البلاغ (Close Ticket)</span>
                 </h3>
                 <p className="text-[11px] font-mono text-slate-500 mt-0.5">{closingItem.id}</p>
               </div>
@@ -765,19 +1056,22 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
             </div>
 
             <form onSubmit={handleConfirmCloseTicket} className="flex flex-col gap-3.5 text-xs">
-              <div className="flex flex-col gap-1">
-                <label className="font-bold text-slate-700">رقم البلاغ في ماكسمو:</label>
-                <input
-                  type="text"
-                  value={closureMaximoNumber}
-                  onChange={(e) => setClosureMaximoNumber(e.target.value)}
-                  placeholder="أدخل رقم بلاغ ماكسمو..."
-                  required
-                  className="bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-mono font-bold text-slate-900 focus:bg-white"
-                />
-              </div>
+              {!isCleaningMode && (
+                <div className="flex flex-col gap-1">
+                  <label className="font-bold text-slate-700">
+                    رقم البلاغ في ماكسمو (Maximo Number - اختياري أو حسب النظام):
+                  </label>
+                  <input
+                    type="text"
+                    value={closureMaximoNumber}
+                    onChange={(e) => setClosureMaximoNumber(e.target.value)}
+                    placeholder="أدخل رقم بلاغ ماكسمو..."
+                    className="bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-mono font-bold text-slate-900 focus:bg-white"
+                  />
+                </div>
+              )}
 
-              {!closingItem.maintenanceTicket?.maximoAttachmentBase64 && (
+              {!isCleaningMode && !closingItem.maintenanceTicket?.maximoAttachmentBase64 && (
                 <div className="flex flex-col gap-1">
                   <label className="font-bold text-slate-700">
                     مرفق البلاغ (PDF أو صورة من ماكسمو - اختياري):
@@ -799,35 +1093,27 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                 </div>
               )}
 
-              <div className="flex flex-col gap-1">
-                <label className="font-bold text-slate-700">تفاصيل الإصلاح المنفذ:</label>
-                <textarea
-                  value={closureNotes}
-                  onChange={(e) => setClosureNotes(e.target.value)}
-                  placeholder="مثال: تم استبدال قلب الخلاط ومعالجة التسريب بالكامل..."
-                  rows={2}
-                  required
-                  className="bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-slate-900 focus:bg-white"
-                />
-              </div>
-
-              <div className="flex flex-col gap-1">
+              <div className="flex flex-col gap-1.5">
                 <label className="font-bold text-slate-700">
-                  صورة المرفق بعد الإصلاح (تظهر لرائد المبنى عند التقييم):
+                  صورة المرفق بعد الإصلاح / التنظيف (Fix Photo for Leader Preview):
                 </label>
                 {closurePhotoBase64 ? (
-                  <div className="relative w-24 h-24 rounded-xl overflow-hidden border border-slate-300">
-                    <img src={closurePhotoBase64} alt="" className="w-full h-full object-cover" />
+                  <div className="relative w-28 h-28 rounded-xl overflow-hidden border-2 border-emerald-500">
+                    <img
+                      src={closurePhotoBase64}
+                      alt=""
+                      className="w-full h-full object-cover"
+                    />
                     <button
                       type="button"
                       onClick={() => setClosurePhotoBase64(undefined)}
                       className="absolute top-1 left-1 bg-rose-600 text-white p-1 rounded-md"
                     >
-                      <Trash2 className="w-3 h-3" />
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 ) : (
-                  <label className="cursor-pointer border-2 border-dashed border-emerald-300 hover:border-emerald-500 rounded-xl p-3 bg-emerald-50/40 flex items-center justify-center gap-2 text-emerald-900 font-bold">
+                  <label className="cursor-pointer border-2 border-dashed border-emerald-400 hover:border-emerald-600 rounded-xl p-3.5 bg-emerald-50/50 flex items-center justify-center gap-2 text-emerald-900 font-bold">
                     <input
                       type="file"
                       accept="image/*"
@@ -835,24 +1121,153 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                       onChange={handleClosurePhotoSelect}
                       className="hidden"
                     />
-                    <Camera className="w-4 h-4 text-emerald-600" />
-                    <span>التقاط / رفع صورة بعد الإصلاح</span>
+                    <Camera className="w-5 h-5 text-emerald-600" />
+                    <span>التقاط أو إرفاق صورة بعد الإصلاح (After Photo)</span>
                   </label>
                 )}
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="font-bold text-slate-700">
+                  ملاحظات الإغلاق (تظهر في محادثة المرفق لرائد المبنى):
+                </label>
+                <textarea
+                  value={closureNotes}
+                  onChange={(e) => setClosureNotes(e.target.value)}
+                  placeholder="مثال: تم استبدال القطعة التالفة واختبار عدم وجود تسريب..."
+                  rows={2}
+                  className="bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-slate-900 focus:bg-white focus:outline-none"
+                />
               </div>
 
               <button
                 type="submit"
                 disabled={isSubmittingClosure || isProcessingClosureFile}
-                className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-sm flex items-center justify-center gap-1.5 mt-1"
+                className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-sm transition flex items-center justify-center gap-1.5"
               >
                 <CheckCircle2 className="w-4 h-4" />
                 <span>
                   {isSubmittingClosure
                     ? 'جاري إغلاق البلاغ...'
-                    : 'تأكيد الإغلاق وإلزام رائد المبنى بالتقييم'}
+                    : 'تأكيد الإغلاق وتحويله لمعاينة واعتماد رائد المبنى'}
                 </span>
               </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Facility Chat Thread Modal for Technicians */}
+      {liveChatItem && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-2xl border border-slate-200 shadow-2xl max-h-[88vh] flex flex-col overflow-hidden">
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4 text-emerald-400" />
+                  <span>محادثة وتاريخ المرفق ({liveChatItem.id})</span>
+                </h3>
+                <p className="text-[11px] text-slate-300 mt-0.5">
+                  {getFixtureBilingualName(liveChatItem).ar} •{' '}
+                  {getFixtureBilingualName(liveChatItem).en}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setChatItem(null)}
+                className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto flex-1 flex flex-col gap-2.5 bg-slate-50">
+              {(liveChatItem.history || []).length === 0 ? (
+                <div className="text-center py-8 text-slate-400 text-xs">
+                  لا توجد رسائل مسجلة في محادثة هذا المرفق بعد.
+                </div>
+              ) : (
+                (liveChatItem.history || []).map((ev: FacilityHistoryEvent) => {
+                  const isTech = ev.actorRole === 'maintenance' || ev.actorRole === 'cleaning';
+                  return (
+                    <div
+                      key={ev.id}
+                      className={`rounded-2xl border p-3 text-xs flex flex-col gap-1.5 ${
+                        isTech
+                          ? 'bg-emerald-50/70 border-emerald-200 mr-4'
+                          : 'bg-white border-slate-200 ml-4'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between text-[11px]">
+                        <strong className="text-slate-900">{ev.actorName}</strong>
+                        <span className="font-mono text-[10px] text-slate-500">
+                          {new Date(ev.timestamp).toLocaleString('ar-SA')}
+                        </span>
+                      </div>
+                      {ev.notes && <p className="text-slate-700">{ev.notes}</p>}
+                      {ev.media && ev.media.length > 0 && (
+                        <div className="flex gap-2 pt-1">
+                          {ev.media.map((m) =>
+                            m.type === 'image' ? (
+                              <img
+                                key={m.id}
+                                src={m.url}
+                                alt=""
+                                onClick={() => setPreviewImage(m.url)}
+                                className="w-16 h-16 rounded-xl object-cover border border-slate-300 cursor-pointer"
+                              />
+                            ) : null
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <form
+              onSubmit={handleSendTechChat}
+              className="p-3 bg-white border-t border-slate-200 flex flex-col gap-2"
+            >
+              {chatPhotoBase64 && (
+                <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-xl border border-slate-200 self-start">
+                  <img src={chatPhotoBase64} alt="" className="w-12 h-12 rounded-lg object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setChatPhotoBase64(undefined)}
+                    className="text-xs text-rose-600 font-bold px-2"
+                  >
+                    حذف الصورة
+                  </button>
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <label className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer shrink-0">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleTechChatPhotoSelect}
+                    className="hidden"
+                  />
+                  <ImageIcon className="w-4 h-4 text-blue-600" />
+                </label>
+                <input
+                  type="text"
+                  value={chatText}
+                  onChange={(e) => setChatText(e.target.value)}
+                  placeholder="أضف رد أو صورة في محادثة المرفق..."
+                  className="flex-1 bg-slate-100 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={isSendingChat || (!chatText.trim() && !chatPhotoBase64)}
+                  className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1 shrink-0"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>إرسال</span>
+                </button>
+              </div>
             </form>
           </div>
         </div>
@@ -861,11 +1276,10 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
       {previewImage && (
         <ImageViewerModal
           src={previewImage}
-          title="معاينة المرفق"
+          title="معاينة مرفق البلاغ"
           onClose={() => setPreviewImage(null)}
         />
       )}
     </div>
   );
 };
-

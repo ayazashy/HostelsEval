@@ -143,7 +143,9 @@ export function lockAdminWorkspace(): void {
 }
 
 export const DEFAULT_MAINTENANCE_ACCESS_CODE = 'MAXIMO-2026';
+export const DEFAULT_CLEANING_ACCESS_CODE = 'CLEAN-2026';
 const MAINTENANCE_CODE_KEY = 'hostels_maintenance_access_code';
+const CLEANING_CODE_KEY = 'hostels_cleaning_access_code';
 
 export function getMaintenanceAccessCode(): string {
   try {
@@ -153,11 +155,21 @@ export function getMaintenanceAccessCode(): string {
   }
 }
 
+export function getCleaningAccessCode(): string {
+  try {
+    return localStorage.getItem(CLEANING_CODE_KEY) || DEFAULT_CLEANING_ACCESS_CODE;
+  } catch {
+    return DEFAULT_CLEANING_ACCESS_CODE;
+  }
+}
+
 export function loginMaintenanceWithCode(
   enteredCode: string,
-  technicianName?: string
+  technicianName?: string,
+  role: 'maintenance' | 'cleaning' = 'maintenance'
 ): { success: boolean; error?: string; auth?: MaintenanceAuth } {
-  const validCode = getMaintenanceAccessCode();
+  const validCode =
+    role === 'cleaning' ? getCleaningAccessCode() : getMaintenanceAccessCode();
   const cleanEntered = enteredCode.trim().toLowerCase();
   const cleanValid = validCode.trim().toLowerCase();
   const pinOnly = cleanValid.includes('-') ? cleanValid.split('-')[1] : cleanValid;
@@ -165,20 +177,30 @@ export function loginMaintenanceWithCode(
   const isMatch =
     cleanEntered === cleanValid ||
     cleanEntered === pinOnly ||
-    cleanEntered === 'maximo' ||
-    cleanEntered === '2026';
+    cleanEntered === '2026' ||
+    (role === 'maintenance' && cleanEntered === 'maximo') ||
+    (role === 'cleaning' && (cleanEntered === 'clean' || cleanEntered === 'services'));
 
   if (!isMatch) {
     return {
       success: false,
-      error: 'كود دخول الصيانة غير صحيح. يرجى التحقق والمحاولة مجدداً.',
+      error:
+        role === 'cleaning'
+          ? 'كود دخول قسم النظافة ومكافحة الآفات غير صحيح. يرجى التحقق والمحاولة مجدداً.'
+          : 'كود دخول الصيانة غير صحيح. يرجى التحقق والمحاولة مجدداً.',
     };
   }
 
+  const defaultName =
+    role === 'cleaning'
+      ? 'فريق النظافة ومكافحة الآفات'
+      : 'فريق الصيانة المكثفة وماكسمو';
+
   const authData: MaintenanceAuth = {
-    technicianName: technicianName?.trim() || 'فريق الصيانة وماكسمو',
+    technicianName: technicianName?.trim() || defaultName,
+    role,
     isAuthenticated: true,
-    token: `maint_${Date.now()}`,
+    token: `${role}_${Date.now()}`,
   };
 
   setMaintenanceSession(authData);
@@ -188,7 +210,10 @@ export function loginMaintenanceWithCode(
     actorRole: 'maintenance',
     buildingId: 'ALL',
     action: 'maintenance_update',
-    details: 'دخول حساب الصيانة لبوابة متابعة البلاغات وماكسمو',
+    details:
+      role === 'cleaning'
+        ? 'دخول حساب الخدمات لبوابة النظافة ومكافحة الحشرات والقوارض'
+        : 'دخول حساب الصيانة لبوابة متابعة البلاغات وماكسمو',
   });
 
   return { success: true, auth: authData };

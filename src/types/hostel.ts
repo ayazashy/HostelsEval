@@ -11,11 +11,20 @@ export type FacilityCategoryCode = 'BTH' | 'KIT' | 'LND' | 'STD' | 'COR' | 'ELV'
 
 export type FixtureTypeCode = 'SNK' | 'SHW' | 'TOI' | 'WHT' | 'EXH' | 'FLR' | 'OTH' | string;
 
+export type ServiceDepartment =
+  | 'plumbing'
+  | 'carpentry_civil'
+  | 'electrical'
+  | 'hvac_mechanical'
+  | 'cleaning'
+  | 'pest_control';
+
 export interface DefectTag {
   id: string;
   labelAr: string;
   labelEn: string;
   category: 'water' | 'hygiene' | 'electrical' | 'mechanical' | 'structural';
+  department?: ServiceDepartment;
   severity: SeverityLevel;
   iconName: string;
 }
@@ -53,14 +62,15 @@ export type FacilityHistoryAction =
   | 'maximo_registered'
   | 'maintenance_closed'
   | 'leader_verified'
-  | 'leader_rejected_reopened';
+  | 'leader_rejected_reopened'
+  | 'chat_message';
 
 export interface FacilityHistoryEvent {
   id: string;
   timestamp: string;
   action: FacilityHistoryAction;
   actorName: string;
-  actorRole: 'leader' | 'maintenance' | 'admin';
+  actorRole: 'leader' | 'maintenance' | 'cleaning' | 'admin';
   status: FixtureStatus;
   defects?: string[];
   notes?: string;
@@ -80,6 +90,7 @@ export type MaintenanceTicketStatus =
 
 export interface MaintenanceTicketInfo {
   status: MaintenanceTicketStatus;
+  department?: ServiceDepartment;
   maximoNumber?: string;
   maximoAttachmentBase64?: string;
   maximoAttachmentName?: string;
@@ -102,6 +113,7 @@ export interface MaintenanceTicketInfo {
 
 export interface MaintenanceAuth {
   technicianName: string;
+  role?: 'maintenance' | 'cleaning';
   isAuthenticated: boolean;
   token: string;
 }

@@ -49,7 +49,7 @@ export const OfficialReportModal: React.FC<OfficialReportModalProps> = ({
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-5 h-5 text-blue-700" />
             <h2 className="text-sm font-bold text-slate-900">
-              تقرير متابعة وتقييم مرافق مباني الإسكان الطلابي
+              تقرير برنامج الصيانة المكثفة ومتابعة مرافق الإسكان الطلابي
             </h2>
           </div>
 

@@ -90,7 +90,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             />
             <div className="min-w-0">
               <h1 className="text-xs sm:text-base font-bold text-slate-900 tracking-tight truncate">
-                تقييم ومتابعة مرافق الإسكان الطلابي
+                برنامج الصيانة المكثفة ومتابعة مرافق الإسكان
               </h1>
               <p className="text-[10px] text-slate-500 hidden sm:block">
                 جامعة الملك سعود • عمادة شؤون الطلاب
@@ -150,7 +150,11 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <Wrench className="w-3.5 h-3.5" />
-              <span>بوابة الصيانة وماكسمو</span>
+              <span>
+                {maintenanceAuth?.role === 'cleaning'
+                  ? 'بوابة النظافة والآفات'
+                  : 'بوابة الصيانة والخدمات'}
+              </span>
             </button>
 
             {featureFlags.enableOfficialReports && (
@@ -283,7 +287,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           }`}
         >
           <Wrench className="w-4 h-4 mb-0.5" />
-          <span>الصيانة وماكسمو</span>
+          <span>{maintenanceAuth?.role === 'cleaning' ? 'النظافة والآفات' : 'الصيانة والخدمات'}</span>
         </button>
 
         {isAdmin ? (

@@ -1,6 +1,6 @@
 // ============================================================================
-// 🛠️ بطاقة المرفق الذكية المتوافقة مع الجوال (Mobile-First Facility Card)
-// تدعم: الحفظ السريع بنقرة واحدة، الوسائط المتعددة (صور/فيديو/PDF)، والسجل التاريخي للمرفق
+// 🛠️ بطاقة المرفق الذكية المتوافقة مع الجوال (Mobile-First Facility Card V3)
+// تدعم: الاختيارات المسبقة الدقيقة لكل مرفق، الوسائط المتعددة، ومحادثة تحديثات المرفق المستمرة
 // ============================================================================
 
 import React, { useState, useEffect } from 'react';
@@ -12,10 +12,18 @@ import {
   FacilityMediaItem,
   FacilityHistoryEvent,
 } from '../../types/hostel';
-import { DEFECT_TAGS } from '../../config/facilityTemplates';
+import {
+  DEFECT_TAGS,
+  SERVICE_DEPARTMENTS,
+  resolveEvaluationDepartment,
+} from '../../config/facilityTemplates';
 import { generateFixtureUID } from '../../utils/uidGenerator';
-import { processFacilityMediaFile } from '../../utils/imageCompressor';
-import { CloudSaveResult } from '../../services/firestoreService';
+import { processFacilityMediaFile, compressAndWatermarkImage } from '../../utils/imageCompressor';
+import {
+  CloudSaveResult,
+  appendFacilityChatMessage,
+  evaluateClosedTicket,
+} from '../../services/firestoreService';
 import { ImageViewerModal } from '../Common/ImageViewerModal';
 import {
   Camera,
@@ -26,7 +34,7 @@ import {
   Trash2,
   Check,
   Lock,
-  History,
+  MessageSquare,
   Wrench,
   FileText,
   Film,
@@ -34,6 +42,7 @@ import {
   ChevronUp,
   Plus,
   Star,
+  Send,
   X,
 } from 'lucide-react';
 
@@ -103,6 +112,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
   });
 
   const [isExpanded, setIsExpanded] = useState<boolean>(false);
+  const [showAllDefects, setShowAllDefects] = useState<boolean>(false);
   const [showHistoryModal, setShowHistoryModal] = useState<boolean>(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [isProcessingMedia, setIsProcessingMedia] = useState<boolean>(false);
@@ -111,6 +121,13 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
     status: 'idle' | 'cloud_success' | 'local_only' | 'error';
     message?: string;
   }>({ status: 'idle' });
+
+  // Per-Facility Chat Thread State
+  const [chatText, setChatText] = useState<string>('');
+  const [chatPhotoBase64, setChatPhotoBase64] = useState<string | undefined>(undefined);
+  const [isSendingChat, setIsSendingChat] = useState<boolean>(false);
+  const [quickRejectReason, setQuickRejectReason] = useState<string>('');
+  const [showRejectInput, setShowRejectInput] = useState<boolean>(false);
 
   useEffect(() => {
     if (existingEvaluation) {
@@ -151,6 +168,24 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
     }
     return true;
   };
+
+  // Fixture-specific pre-defined defect tags from نطاق بلاغات الصيانة العامة.docx
+  const primaryDefects = React.useMemo(() => {
+    const defaultIds = template.defaultDefectTags || [];
+    const matched = defaultIds
+      .map((id) => DEFECT_TAGS.find((t) => t.id === id))
+      .filter((t): t is NonNullable<typeof t> => !!t);
+    // Also include any already-selected defects so they remain visible
+    for (const selId of selectedDefects) {
+      if (!matched.some((m) => m.id === selId)) {
+        const found = DEFECT_TAGS.find((t) => t.id === selId);
+        if (found) matched.push(found);
+      }
+    }
+    return matched.length > 0 ? matched : DEFECT_TAGS.slice(0, 12);
+  }, [template.defaultDefectTags, selectedDefects]);
+
+  const visibleDefects = showAllDefects ? DEFECT_TAGS : primaryDefects;
 
   // 1-Tap Quick "Operational" Save for fast mobile walkthroughs
   const handleQuickMarkOperational = async () => {
@@ -288,7 +323,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
       if (res && res.cloudSynced) {
         setSaveFeedback({
           status: 'cloud_success',
-          message: 'تم الحفظ سحابياً ☁️ ✓',
+          message: 'تم فتح/تحديث البلاغ سحابياً ☁️ ✓',
         });
       } else if (res && res.success) {
         setSaveFeedback({
@@ -314,9 +349,122 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
     }, 4000);
   };
 
+  // Send a message/photo inside the Facility Chat Thread
+  const handleChatPhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsProcessingMedia(true);
+    try {
+      const res = await compressAndWatermarkImage(file, {
+        fixtureId,
+        inspectorName,
+      });
+      setChatPhotoBase64(res.base64);
+    } catch {
+      alert('تعذر ضغط الصورة');
+    } finally {
+      setIsProcessingMedia(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleSendChatMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isReadOnly) {
+      if (onOpenLogin) onOpenLogin();
+      return;
+    }
+    if (!chatText.trim() && !chatPhotoBase64) return;
+
+    setIsSendingChat(true);
+    try {
+      const baseEval: FixtureEvaluation = existingEvaluation || {
+        id: fixtureId,
+        buildingId,
+        wingId,
+        floor,
+        categoryCode,
+        fixtureTypeCode: template.typeCode,
+        fixtureIndex,
+        status,
+        defects: selectedDefects,
+        notes,
+        rating: 5,
+        hasPhoto: false,
+        inspectorName,
+        updatedAt: new Date().toISOString(),
+      };
+
+      await appendFacilityChatMessage(baseEval, {
+        message: chatText.trim() || 'مرفق صورة تحديث للمرفق',
+        actorName: inspectorName,
+        actorRole: 'leader',
+        photoBase64: chatPhotoBase64,
+      });
+
+      setChatText('');
+      setChatPhotoBase64(undefined);
+      // Trigger parent refresh
+      await onSave({
+        ...baseEval,
+        updatedAt: new Date().toISOString(),
+      });
+    } finally {
+      setIsSendingChat(false);
+    }
+  };
+
+  // Direct Approve / Reject from inside the Facility Chat Thread
+  const handleQuickApproveInThread = async () => {
+    if (!existingEvaluation || isReadOnly) return;
+    setIsSendingChat(true);
+    try {
+      await evaluateClosedTicket(existingEvaluation, {
+        isFixed: true,
+        rating: 5,
+        feedback: 'تمت معاينة المرفق واعتماد الإصلاح من داخل محادثة المرفق ✅',
+        leaderName: inspectorName,
+      });
+      window.location.reload();
+    } finally {
+      setIsSendingChat(false);
+    }
+  };
+
+  const handleQuickRejectInThread = async () => {
+    if (!existingEvaluation || isReadOnly) return;
+    if (!quickRejectReason.trim()) {
+      alert('يرجى كتابة سبب الرفض ليظهر للفني عند إعادة فتح البلاغ');
+      return;
+    }
+    setIsSendingChat(true);
+    try {
+      await evaluateClosedTicket(existingEvaluation, {
+        isFixed: false,
+        rating: 1,
+        feedback: quickRejectReason.trim(),
+        leaderName: inspectorName,
+      });
+      setShowRejectInput(false);
+      setQuickRejectReason('');
+      window.location.reload();
+    } finally {
+      setIsSendingChat(false);
+    }
+  };
+
   const historyList: FacilityHistoryEvent[] = existingEvaluation?.history || [];
   const ticket = existingEvaluation?.maintenanceTicket;
   const isEvaluatedBefore = !!existingEvaluation;
+
+  // Determine routed department badge
+  const activeDeptKey = resolveEvaluationDepartment({
+    categoryCode,
+    fixtureTypeCode: template.typeCode,
+    defects: selectedDefects,
+    maintenanceTicket: ticket,
+  });
+  const activeDeptInfo = SERVICE_DEPARTMENTS[activeDeptKey];
 
   const getCardStyle = () => {
     if (ticket?.status === 'pending_evaluation') {
@@ -355,8 +503,16 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
             <h4 className="text-sm font-bold text-slate-900 truncate">
               {template.nameAr} ({fixtureIndex})
             </h4>
-            <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+            <p className="text-[10px] text-slate-500 truncate">{template.nameEn}</p>
+            <div className="flex flex-wrap items-center gap-1.5 mt-1">
               <span className="text-[10px] font-mono text-slate-500">{fixtureId}</span>
+              {status !== 'operational' && activeDeptInfo && (
+                <span
+                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${activeDeptInfo.badgeClass}`}
+                >
+                  {activeDeptInfo.nameAr}
+                </span>
+              )}
               {ticket?.maximoNumber && (
                 <span className="text-[10px] font-mono font-bold bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded border border-blue-200">
                   ماكسمو #{ticket.maximoNumber}
@@ -364,19 +520,19 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
               )}
               {ticket?.status === 'pending_evaluation' && (
                 <span className="text-[10px] font-bold bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full border border-purple-300 animate-pulse">
-                  بانتظار تقييمك كرائد مبنى ⭐
+                  بانتظار معاينتك واعتمادك ⭐
                 </span>
               )}
               {ticket?.status === 'reopened' && (
                 <span className="text-[10px] font-bold bg-rose-100 text-rose-800 px-2 py-0.5 rounded-full border border-rose-300">
-                  معاد فتحه للصيانة 🔄
+                  معاد فتحه 🔄
                 </span>
               )}
             </div>
           </div>
         </div>
 
-        {/* History Button & Save Feedback */}
+        {/* Facility Chat / History Thread Button & Save Feedback */}
         <div className="flex items-center gap-1.5 shrink-0">
           {saveFeedback.status !== 'idle' && (
             <span
@@ -395,11 +551,15 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
           <button
             type="button"
             onClick={() => setShowHistoryModal(true)}
-            className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold flex items-center gap-1 transition border border-slate-200"
-            title="السجل التاريخي للمرفق"
+            className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 transition border ${
+              ticket?.status === 'pending_evaluation'
+                ? 'bg-purple-600 text-white border-purple-700 shadow-xs'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+            }`}
+            title="شريط محادثة وتحديثات المرفق"
           >
-            <History className="w-3.5 h-3.5 text-blue-600" />
-            <span>السجل ({historyList.length})</span>
+            <MessageSquare className="w-3.5 h-3.5" />
+            <span>المحادثة ({historyList.length})</span>
           </button>
         </div>
       </div>
@@ -416,14 +576,14 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                     key={dId}
                     className="text-[11px] px-2 py-0.5 rounded-lg bg-rose-50 text-rose-800 border border-rose-200 font-bold"
                   >
-                    {tag ? tag.labelAr : dId}
+                    {tag ? `${tag.labelAr} (${tag.labelEn})` : dId}
                   </span>
                 );
               })}
             </div>
           )}
 
-          {notes && <p className="text-xs text-slate-600 line-clamp-2">{notes}</p>}
+          {notes && <p className="text-xs text-slate-600 line-clamp-2">ملاحظة: {notes}</p>}
 
           {mediaList.length > 0 && (
             <div className="flex items-center gap-2 overflow-x-auto pb-1">
@@ -484,7 +644,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
           }`}
         >
           <AlertTriangle className="w-4 h-4 shrink-0" />
-          <span>يحتاج صيانة</span>
+          <span>{categoryCode === 'CLN' ? 'يحتاج نظافة/رش' : 'يحتاج صيانة'}</span>
         </button>
 
         <button
@@ -511,12 +671,12 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
           {isExpanded ? (
             <>
               <ChevronUp className="w-3.5 h-3.5" />
-              <span>إخفاء تفاصيل البلاغ والوسائط</span>
+              <span>إخفاء خيارات العطل والوسائط</span>
             </>
           ) : (
             <>
               <ChevronDown className="w-3.5 h-3.5" />
-              <span>تعديل تفاصيل العطل / إضافة صور ووسائط ({mediaList.length})</span>
+              <span>تحديد نوع العطل / إرفاق صور وتوضيح ({mediaList.length})</span>
             </>
           )}
         </button>
@@ -525,28 +685,45 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
       {/* Expanded Issue & Multi-Media Editor */}
       {isExpanded && (
         <div className="flex flex-col gap-3.5 pt-2 border-t border-slate-200 animate-in fade-in duration-150">
-          {/* Defect Chips */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-slate-800">
-              1. اختر الأعطال المرصودة (يمكن اختيار أكثر من عطل):
-            </label>
+          {/* Standardized Pre-Defined Defect Chips */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <label className="text-xs font-bold text-slate-800">
+                1. اختر العطل المحدد من القائمة المعيارية (يظهر للفني بالعربية والإنجليزية):
+              </label>
+              <button
+                type="button"
+                onClick={() => setShowAllDefects(!showAllDefects)}
+                className="text-[11px] font-bold text-blue-600 hover:underline shrink-0"
+              >
+                {showAllDefects ? 'عرض أعطال هذا المرفق فقط' : 'عرض كافة الأعطال (+)'}
+              </button>
+            </div>
+
             <div className="flex flex-wrap gap-1.5">
-              {DEFECT_TAGS.map((defect) => {
+              {visibleDefects.map((defect) => {
                 const isSelected = selectedDefects.includes(defect.id);
                 return (
                   <button
                     key={defect.id}
                     type="button"
                     onClick={() => toggleDefect(defect.id)}
-                    className={`text-xs px-3 py-1.5 rounded-xl border font-bold transition ${
+                    className={`text-right px-3 py-1.5 rounded-xl border transition flex flex-col ${
                       isSelected
                         ? defect.severity === 'critical'
                           ? 'bg-rose-600 border-rose-600 text-white shadow-xs'
                           : 'bg-amber-500 border-amber-500 text-white shadow-xs'
-                        : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+                        : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'
                     }`}
                   >
-                    {defect.labelAr}
+                    <span className="text-xs font-bold">{defect.labelAr}</span>
+                    <span
+                      className={`text-[10px] ${
+                        isSelected ? 'text-white/90' : 'text-slate-500'
+                      }`}
+                    >
+                      {defect.labelEn}
+                    </span>
                   </button>
                 );
               })}
@@ -557,7 +734,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-slate-800">
-                2. الوسائط المرفقة ({mediaList.length}/6 صور أو فيديو):
+                2. تصوير العطل ({mediaList.length}/6 صور أو فيديو):
               </label>
               {isProcessingMedia && (
                 <span className="text-[11px] font-bold text-blue-600 animate-pulse">
@@ -566,7 +743,6 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
               )}
             </div>
 
-            {/* Existing Media Strip */}
             {mediaList.length > 0 && (
               <div className="flex items-center gap-2 overflow-x-auto py-1">
                 {mediaList.map((item) => (
@@ -610,7 +786,6 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
               </div>
             )}
 
-            {/* Add Media Buttons */}
             <div className="grid grid-cols-2 gap-2">
               <label className="cursor-pointer border-2 border-dashed border-blue-300 hover:border-blue-500 rounded-xl p-3 flex items-center justify-center gap-2 bg-blue-50/50 hover:bg-blue-50 transition active:scale-98">
                 <input
@@ -640,15 +815,15 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
             </div>
           </div>
 
-          {/* Notes */}
+          {/* Optional Side Note / Clarification */}
           <div className="flex flex-col gap-1">
             <label className="text-xs font-bold text-slate-800">
-              3. وصف إضافي للبلاغ (يساعد الصيانة في ماكسمو):
+              3. توضيح إضافي على جنب (اختياري):
             </label>
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="مثال: تسريب شديد من محبس الزاوية خلف المرحاض..."
+              placeholder="أي توضيح إضافي بجانب الاختيار (مثال: المغسلة الوسطى بجوار الباب)..."
               rows={2}
               className="w-full text-xs bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none"
             />
@@ -678,7 +853,9 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
               <>
                 <Check className="w-4 h-4" />
                 <span>
-                  {isSaving ? 'جاري الحفظ والمزامنة...' : 'حفظ البلاغ وتحديث سجل المرفق'}
+                  {isSaving
+                    ? 'جاري إرسال البلاغ للقسم المختص...'
+                    : `إرسال البلاغ إلى (${activeDeptInfo?.nameAr || 'الصيانة'}) وتحديث محادثة المرفق`}
                 </span>
               </>
             )}
@@ -686,87 +863,151 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
         </div>
       )}
 
-      {/* Facility Historical Log Modal (السجل التاريخي الكامل للمرفق) */}
+      {/* Per-Facility Continuous Chat & Lifecycle Thread Modal (محادثة وتحديثات المرفق المستمرة) */}
       {showHistoryModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-2xl border border-slate-200 shadow-2xl max-h-[88vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom-4 duration-200">
+          <div className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-2xl border border-slate-200 shadow-2xl max-h-[90vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom-4 duration-200">
             {/* Modal Header */}
-            <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <History className="w-4 h-4 text-blue-600" />
-                  <span>السجل التاريخي للمرفق: {template.nameAr} (#{fixtureIndex})</span>
+                <h3 className="text-sm font-bold flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4 text-emerald-400" />
+                  <span>محادثة وتاريخ المرفق: {template.nameAr} (#{fixtureIndex})</span>
                 </h3>
-                <p className="text-[11px] font-mono text-slate-500 mt-0.5">{fixtureId}</p>
+                <p className="text-[11px] font-mono text-slate-300 mt-0.5">
+                  {fixtureId} • {template.nameEn}
+                </p>
               </div>
               <button
                 type="button"
                 onClick={() => setShowHistoryModal(false)}
-                className="p-1.5 rounded-xl bg-slate-200/70 hover:bg-slate-300 text-slate-700"
+                className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Modal Body */}
-            <div className="p-4 overflow-y-auto flex-1 flex flex-col gap-3">
-              {/* Current Maximo Ticket Summary if present */}
+            {/* Modal Body: Active Ticket Banner + Before/After Approval + Chat Thread */}
+            <div className="p-4 overflow-y-auto flex-1 flex flex-col gap-3 bg-slate-50">
+              {/* Current Ticket Status & Direct Before/After Approval Box */}
               {ticket && (
-                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-blue-950 flex items-center gap-1.5">
+                <div className="bg-white border border-blue-200 rounded-2xl p-3.5 text-xs flex flex-col gap-2.5 shadow-xs">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <span className="font-bold text-slate-900 flex items-center gap-1.5">
                       <Wrench className="w-3.5 h-3.5 text-blue-600" />
-                      <span>حالة بلاغ الصيانة الحالي:</span>
+                      <span>مسار البلاغ ({activeDeptInfo?.nameAr}):</span>
                     </span>
-                    <span className="font-bold px-2 py-0.5 rounded-md bg-white border border-blue-200 text-blue-800">
+                    <span className="font-bold px-2.5 py-0.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-900">
                       {ticket.status === 'open'
-                        ? 'مفتوح (بانتظار الصيانة)'
+                        ? 'مفتوح لدى القسم المختص'
                         : ticket.status === 'in_progress'
-                        ? 'مسجل في ماكسمو وقيد التنفيذ'
+                        ? 'قيد المعالجة والتنفيذ'
                         : ticket.status === 'pending_evaluation'
-                        ? 'مغلق من الصيانة - بانتظار تقييم الرائد'
+                        ? 'تم الإصلاح - بانتظار معاينتك واعتمادك ⭐'
                         : ticket.status === 'reopened'
-                        ? 'معاد فتحه (رفض إغلاق صوري)'
+                        ? 'مرفوض ومعاد فتحه 🔄'
                         : 'مغلق ومعتمد نهائياً ✅'}
                     </span>
                   </div>
-                  {ticket.maximoNumber && (
-                    <div className="text-blue-900">
-                      رقم بلاغ ماكسمو: <strong className="font-mono">{ticket.maximoNumber}</strong>
+
+                  {/* Side-by-Side Before & After Images when closed by Technician */}
+                  {(existingEvaluation?.photoBase64 || ticket.closurePhotoBase64) && (
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-2 flex flex-col gap-1">
+                        <span className="text-[10px] font-bold text-rose-700">
+                          صورة البلاغ (قبل الإصلاح):
+                        </span>
+                        {existingEvaluation?.photoBase64 ? (
+                          <img
+                            src={existingEvaluation.photoBase64}
+                            alt="قبل"
+                            onClick={() => setPreviewImage(existingEvaluation.photoBase64 || null)}
+                            className="w-full h-24 object-cover rounded-lg cursor-pointer border border-slate-200"
+                          />
+                        ) : (
+                          <div className="h-24 flex items-center justify-center text-[10px] text-slate-400">
+                            بدون صورة قبل
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="bg-emerald-50/50 border border-emerald-200 rounded-xl p-2 flex flex-col gap-1">
+                        <span className="text-[10px] font-bold text-emerald-800">
+                          صورة الفني (بعد الإصلاح):
+                        </span>
+                        {ticket.closurePhotoBase64 ? (
+                          <img
+                            src={ticket.closurePhotoBase64}
+                            alt="بعد"
+                            onClick={() => setPreviewImage(ticket.closurePhotoBase64 || null)}
+                            className="w-full h-24 object-cover rounded-lg cursor-pointer border border-emerald-300"
+                          />
+                        ) : (
+                          <div className="h-24 flex items-center justify-center text-[10px] text-slate-400">
+                            بانتظار صورة الإصلاح
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
-                  {ticket.maximoAttachmentBase64 && (
-                    <div className="pt-1">
-                      {ticket.maximoAttachmentType === 'pdf' ? (
-                        <a
-                          href={ticket.maximoAttachmentBase64}
-                          download={ticket.maximoAttachmentName || `Maximo_${ticket.maximoNumber}.pdf`}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-blue-300 text-blue-700 font-bold hover:bg-blue-100"
-                        >
-                          <FileText className="w-3.5 h-3.5 text-rose-600" />
-                          <span>تحميل مرفق بلاغ ماكسمو ({ticket.maximoAttachmentName || 'PDF'})</span>
-                        </a>
-                      ) : (
+
+                  {/* Direct Leader Approval / Rejection Buttons inside the Chat Thread */}
+                  {!isReadOnly && ticket.status === 'pending_evaluation' && (
+                    <div className="pt-2 border-t border-slate-100 flex flex-col gap-2">
+                      <span className="font-bold text-purple-900">
+                        قام الفني بإغلاق البلاغ وإرفاق النتيجة — هل تعتمد الإصلاح؟
+                      </span>
+                      <div className="grid grid-cols-2 gap-2">
                         <button
                           type="button"
-                          onClick={() => setPreviewImage(ticket.maximoAttachmentBase64 || null)}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-blue-300 text-blue-700 font-bold hover:bg-blue-100"
+                          disabled={isSendingChat}
+                          onClick={handleQuickApproveInThread}
+                          className="py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center justify-center gap-1.5 shadow-xs"
                         >
-                          <ImageIcon className="w-3.5 h-3.5 text-blue-600" />
-                          <span>عرض صورة بلاغ ماكسمو المرفقة</span>
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>اعتماد الإصلاح ✅</span>
                         </button>
+                        <button
+                          type="button"
+                          disabled={isSendingChat}
+                          onClick={() => setShowRejectInput(!showRejectInput)}
+                          className="py-2 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold flex items-center justify-center gap-1.5 shadow-xs"
+                        >
+                          <XCircle className="w-4 h-4" />
+                          <span>رفض وإعادة فتح ❌</span>
+                        </button>
+                      </div>
+
+                      {showRejectInput && (
+                        <div className="flex gap-1.5 pt-1">
+                          <input
+                            type="text"
+                            value={quickRejectReason}
+                            onChange={(e) => setQuickRejectReason(e.target.value)}
+                            placeholder="اكتب سبب الرفض لإعادة فتح البلاغ للفني..."
+                            className="flex-1 bg-rose-50 border border-rose-300 rounded-xl px-3 py-2 text-xs text-slate-900"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleQuickRejectInThread}
+                            className="px-3 py-2 bg-rose-700 text-white rounded-xl font-bold shrink-0"
+                          >
+                            تأكيد الرفض
+                          </button>
+                        </div>
                       )}
                     </div>
                   )}
                 </div>
               )}
 
+              {/* Chronological Chat / Updates Thread */}
               {historyList.length === 0 ? (
-                <div className="text-center py-10 text-slate-400 text-xs">
-                  لا توجد أحداث تاريخية مسجلة لهذا المرفق حتى الآن.
+                <div className="text-center py-10 text-slate-400 text-xs bg-white rounded-2xl border border-slate-200">
+                  لا توجد رسائل أو بلاغات سابقة في سجل هذا المرفق حتى الآن.
                 </div>
               ) : (
-                <div className="relative border-r-2 border-slate-200 pr-4 mr-2 flex flex-col gap-3">
+                <div className="flex flex-col gap-2.5">
                   {historyList.map((ev) => {
                     const d = new Date(ev.timestamp);
                     const dateStr = d.toLocaleDateString('ar-SA', {
@@ -776,24 +1017,43 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                       minute: '2-digit',
                     });
 
+                    const isTech = ev.actorRole === 'maintenance' || ev.actorRole === 'cleaning';
+
                     const getActionLabel = () => {
                       switch (ev.action) {
                         case 'maximo_registered':
-                          return { text: 'تسجيل رقم ومرفق ماكسمو 🛠️', cls: 'bg-blue-100 text-blue-800' };
+                          return {
+                            text: 'تسجيل رقم ومرفق ماكسمو 🛠️',
+                            cls: 'bg-blue-100 text-blue-800',
+                          };
                         case 'maintenance_closed':
-                          return { text: 'إغلاق البلاغ من الصيانة 🔧', cls: 'bg-purple-100 text-purple-800' };
+                          return {
+                            text: 'إتمام المعالجة وإرفاق صورة الإصلاح 🔧',
+                            cls: 'bg-purple-100 text-purple-800',
+                          };
                         case 'leader_verified':
-                          return { text: 'اعتماد الإغلاق وتقييم الخدمة ✅', cls: 'bg-emerald-100 text-emerald-800' };
+                          return {
+                            text: 'اعتماد الإصلاح من رائد المبنى ✅',
+                            cls: 'bg-emerald-100 text-emerald-800',
+                          };
                         case 'leader_rejected_reopened':
-                          return { text: 'رفض إغلاق صوري وإعادة فتح ❌', cls: 'bg-rose-100 text-rose-800' };
+                          return {
+                            text: 'رفض الإصلاح وإعادة فتح البلاغ ❌',
+                            cls: 'bg-rose-100 text-rose-800',
+                          };
+                        case 'chat_message':
+                          return {
+                            text: 'رسالة متابعة وتحديث 💬',
+                            cls: 'bg-slate-200 text-slate-800',
+                          };
                         default:
                           return {
                             text:
                               ev.status === 'operational'
                                 ? 'فحص ميداني: سليم 🟢'
                                 : ev.status === 'needs_maintenance'
-                                ? 'بلاغ فحص: يحتاج صيانة 🟡'
-                                : 'بلاغ فحص: عاطل 🚨',
+                                ? 'فتح بلاغ: يحتاج معالجة 🟡'
+                                : 'فتح بلاغ طارئ: عاطل 🚨',
                             cls:
                               ev.status === 'operational'
                                 ? 'bg-emerald-50 text-emerald-700'
@@ -809,9 +1069,12 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                     return (
                       <div
                         key={ev.id}
-                        className="relative bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs flex flex-col gap-2"
+                        className={`rounded-2xl border p-3 text-xs flex flex-col gap-2 shadow-2xs ${
+                          isTech
+                            ? 'bg-emerald-50/60 border-emerald-200 mr-4'
+                            : 'bg-white border-slate-200 ml-4'
+                        }`}
                       >
-                        <div className="w-3 h-3 rounded-full bg-blue-600 border-2 border-white absolute -right-[23px] top-4" />
                         <div className="flex flex-wrap items-center justify-between gap-1">
                           <span className={`px-2 py-0.5 rounded-md font-bold text-[11px] ${badge.cls}`}>
                             {badge.text}
@@ -821,7 +1084,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
 
                         <div className="text-[11px] text-slate-600 flex items-center justify-between">
                           <span>
-                            بواسطة: <strong>{ev.actorName}</strong>
+                            المرسل: <strong>{ev.actorName}</strong>
                           </span>
                           {ev.maximoNumber && (
                             <span className="font-mono font-bold text-blue-700">
@@ -844,9 +1107,9 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                               return (
                                 <span
                                   key={dId}
-                                  className="text-[10px] bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-700"
+                                  className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded font-bold text-slate-800"
                                 >
-                                  {t ? t.labelAr : dId}
+                                  {t ? `${t.labelAr} • ${t.labelEn}` : dId}
                                 </span>
                               );
                             })}
@@ -854,18 +1117,18 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                         )}
 
                         {ev.notes && (
-                          <p className="text-slate-700 bg-white p-2 rounded-lg border border-slate-200/80">
+                          <p className="text-slate-800 bg-slate-50 p-2 rounded-xl border border-slate-200/80">
                             {ev.notes}
                           </p>
                         )}
 
                         {ev.media && ev.media.length > 0 && (
-                          <div className="flex items-center gap-1.5 overflow-x-auto pt-1">
+                          <div className="flex items-center gap-2 overflow-x-auto pt-1">
                             {ev.media.map((m) => (
                               <div
                                 key={m.id}
                                 onClick={() => m.type === 'image' && setPreviewImage(m.url)}
-                                className="w-12 h-12 rounded-lg overflow-hidden border border-slate-300 bg-white shrink-0 cursor-pointer"
+                                className="w-16 h-16 rounded-xl overflow-hidden border border-slate-300 bg-white shrink-0 cursor-pointer"
                               >
                                 {m.type === 'image' ? (
                                   <img src={m.url} alt="" className="w-full h-full object-cover" />
@@ -884,6 +1147,64 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Bottom Chat Input Bar to post updates/photos in the facility's thread */}
+            {!isReadOnly && (
+              <form
+                onSubmit={handleSendChatMessage}
+                className="p-3 bg-white border-t border-slate-200 flex flex-col gap-2"
+              >
+                {chatPhotoBase64 && (
+                  <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-xl border border-slate-200 self-start">
+                    <img
+                      src={chatPhotoBase64}
+                      alt=""
+                      className="w-12 h-12 rounded-lg object-cover"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setChatPhotoBase64(undefined)}
+                      className="text-xs text-rose-600 font-bold px-2"
+                    >
+                      حذف الصورة
+                    </button>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2">
+                  <label
+                    className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer shrink-0"
+                    title="إرفاق صورة في محادثة المرفق"
+                  >
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleChatPhotoSelect}
+                      className="hidden"
+                      disabled={isProcessingMedia || isSendingChat}
+                    />
+                    <ImageIcon className="w-4 h-4 text-blue-600" />
+                  </label>
+
+                  <input
+                    type="text"
+                    value={chatText}
+                    onChange={(e) => setChatText(e.target.value)}
+                    placeholder="أضف رسالة أو تحديثاً في سجل محادثة هذا المرفق..."
+                    className="flex-1 bg-slate-100 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:outline-none"
+                  />
+
+                  <button
+                    type="submit"
+                    disabled={isSendingChat || (!chatText.trim() && !chatPhotoBase64)}
+                    className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1 shrink-0"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>إرسال</span>
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

@@ -331,8 +331,10 @@ export function App() {
             allEvaluations={allEvaluations}
             technicianName={
               maintenanceAuth?.technicianName ||
-              (isAdmin ? 'المشرف العام (إدارة الصيانة)' : 'فريق الصيانة')
+              (isAdmin ? 'المشرف العام (إدارة الصيانة والخدمات)' : 'فريق الصيانة')
             }
+            portalRole={maintenanceAuth?.role || 'maintenance'}
+            isAdmin={isAdmin}
             onRefreshEvaluations={loadAllEvaluations}
           />
         )}

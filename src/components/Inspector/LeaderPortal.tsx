@@ -13,6 +13,8 @@ import {
   loadActiveFacilityCategories,
   addNewFacilityItem,
   addNewFacilityCategory,
+  getZonesForFloor,
+  getZoneNameAr,
 } from '../../config/facilityTemplates';
 import { FixtureCard } from './FixtureCard';
 import { EvaluationGateModal } from './EvaluationGateModal';
@@ -102,6 +104,10 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
 
   const floorsCount = structure.floorsCount || currentBuilding.floorsCount || 5;
   const activeTowers = structure.floorTowers[selectedFloor] || [1, 2, 3, 4];
+  const availableZones = React.useMemo(
+    () => getZonesForFloor(selectedFloor, activeTowers),
+    [selectedFloor, activeTowers]
+  );
 
   React.useEffect(() => {
     if (selectedFloor > floorsCount) {
@@ -110,10 +116,17 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
   }, [floorsCount, selectedFloor]);
 
   React.useEffect(() => {
-    if (activeTowers.length > 0 && !activeTowers.includes(selectedWing)) {
-      setSelectedWing(activeTowers[0]);
+    if (availableZones.length > 0 && !availableZones.includes(selectedWing)) {
+      // If switching from floor 2..4 Wing 4 to floor 1, jump directly to Apt 1 (41)
+      if (selectedFloor === 1 && selectedWing === 4 && availableZones.includes(41)) {
+        setSelectedWing(41);
+      } else if (selectedFloor !== 1 && (selectedWing === 41 || selectedWing === 42) && availableZones.includes(4)) {
+        setSelectedWing(4);
+      } else {
+        setSelectedWing(availableZones[0]);
+      }
     }
-  }, [activeTowers, selectedWing]);
+  }, [availableZones, selectedWing, selectedFloor]);
 
   React.useEffect(() => {
     const handleUpdate = () => {
@@ -153,15 +166,27 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
 
   const isLockedByGate = !isReadOnly && pendingEvaluationTickets.length > 0;
 
+  // Categories available in the selected zone (e.g. Roof/Corridors only show ZNE & CLN)
+  const availableCategoriesForZone = React.useMemo(() => {
+    const filtered = categories.filter((cat) => {
+      const tmpls = cat.wingTemplates[selectedWing];
+      if (Array.isArray(tmpls)) {
+        return tmpls.length > 0;
+      }
+      return (cat.wingTemplates[1] || []).length > 0;
+    });
+    return filtered.length > 0 ? filtered : categories;
+  }, [categories, selectedWing]);
+
   const activeCategory =
-    categories.find((cat) => cat.code === selectedCategoryCode) ||
-    categories[0] ||
+    availableCategoriesForZone.find((cat) => cat.code === selectedCategoryCode) ||
+    availableCategoriesForZone[0] ||
     BATHROOM_CATEGORY_CONFIG;
 
   const wingTemplates =
-    activeCategory.wingTemplates[selectedWing] ||
-    activeCategory.wingTemplates[1] ||
-    [];
+    activeCategory.wingTemplates[selectedWing] !== undefined
+      ? activeCategory.wingTemplates[selectedWing]
+      : activeCategory.wingTemplates[1] || [];
 
   const currentSectorEvals = evaluations.filter(
     (e) =>
@@ -390,27 +415,37 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
                       : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                   }`}
                 >
-                  دور {floorNum}
+                  {floorNum === 1 ? 'الدور 1 (الأرضي)' : `دور ${floorNum}`}
                 </button>
               ))}
             </div>
 
-            {/* Wing Pills */}
-            <div className="grid grid-cols-4 gap-1.5">
-              {activeTowers.map((wId) => {
+            {/* Wing & Building Zone Pills (Floor 1 shows Apt 1 & Apt 2 instead of Wing 4 + Office/Corridors/Roof) */}
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+              {availableZones.map((wId) => {
                 const isSelected = selectedWing === wId;
+                const isSpecialZone = wId >= 5;
+                const isApartment = wId === 41 || wId === 42;
                 return (
                   <button
                     key={wId}
                     type="button"
                     onClick={() => setSelectedWing(wId)}
-                    className={`py-2 px-2 rounded-xl border text-center transition flex flex-col items-center justify-center ${
+                    className={`py-2 px-3 rounded-xl border text-center transition shrink-0 flex items-center justify-center gap-1 ${
                       isSelected
-                        ? 'bg-blue-50 border-blue-600 text-blue-900 font-bold shadow-xs'
+                        ? isSpecialZone
+                          ? 'bg-purple-700 border-purple-700 text-white font-bold shadow-xs'
+                          : isApartment
+                          ? 'bg-emerald-700 border-emerald-700 text-white font-bold shadow-xs'
+                          : 'bg-blue-50 border-blue-600 text-blue-900 font-bold shadow-xs'
+                        : isSpecialZone
+                        ? 'bg-purple-50/60 border-purple-200 text-purple-900 hover:bg-purple-100/70'
+                        : isApartment
+                        ? 'bg-emerald-50/60 border-emerald-200 text-emerald-900 hover:bg-emerald-100/70'
                         : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
                     }`}
                   >
-                    <span className="text-xs font-bold">جناح {wId}</span>
+                    <span className="text-xs font-bold">{getZoneNameAr(wId, true)}</span>
                   </button>
                 );
               })}
@@ -419,14 +454,16 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
             {/* Category Tabs + Easy "+ إضافة مرفق" Button */}
             <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100 overflow-x-auto no-scrollbar">
               <div className="flex items-center gap-1.5">
-                {categories.map((cat) => (
+                {availableCategoriesForZone.map((cat) => (
                   <button
                     key={cat.code}
                     type="button"
                     onClick={() => setSelectedCategoryCode(cat.code)}
                     className={`text-xs px-3 py-1.5 rounded-xl font-bold transition shrink-0 ${
-                      selectedCategoryCode === cat.code
-                        ? 'bg-slate-900 text-white'
+                      activeCategory.code === cat.code
+                        ? cat.code === 'CLN'
+                          ? 'bg-emerald-700 text-white'
+                          : 'bg-slate-900 text-white'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                     }`}
                   >
@@ -470,7 +507,7 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
               </div>
               <div>
                 <span className="text-xs font-bold text-slate-900 block">
-                  {activeCategory.nameAr} • الدور {selectedFloor} • جناح {selectedWing}
+                  {activeCategory.nameAr} • الدور {selectedFloor} • {getZoneNameAr(selectedWing, false)}
                 </span>
                 <span className="text-[11px] text-slate-500">
                   تم فحص <strong>{evaluatedCount}</strong> من <strong>{totalSlotsCount}</strong> مرفق
