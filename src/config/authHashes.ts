@@ -6,6 +6,7 @@ export const AUTH_HASH_SALT = 'ksu_hostels_eval_auth_v3';
 
 export const MAINTENANCE_CODE_HASH = '3e6e95f7215e20594d47df4b6e99fa121318f1a6ddb83dbe032238bf6d2d8223';
 export const CLEANING_CODE_HASH = '7d764bb857c1e038448790beae33bb777506cb932da266e1ea96b1bbb47b5ef6';
+export const VIEWER_CODE_HASH = '618e8bfdcf56e115919d63a2ddc63e515bb032e484dd7a7c4829cd70d6657130';
 
 export const LEADER_CODE_HASHES: Record<string, string> = {
   "B01": "efca6d55110b3779883ed0f76715c331ce6043a9a2ed2873932ecdb4d2c04386",

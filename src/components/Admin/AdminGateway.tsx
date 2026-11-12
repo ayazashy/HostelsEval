@@ -41,8 +41,10 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
   const [inspectorName, setInspectorName] = useState('');
   const [leaderError, setLeaderError] = useState<string | null>(null);
 
-  // Maintenance / Cleaning Services states
-  const [staffTrack, setStaffTrack] = useState<'maintenance' | 'cleaning'>('maintenance');
+  // Maintenance / Cleaning Services / Read-Only KPI Viewer states
+  const [staffTrack, setStaffTrack] = useState<'maintenance' | 'cleaning' | 'viewer'>(
+    'maintenance'
+  );
   const [technicianName, setTechnicianName] = useState('');
   const [maintenanceCode, setMaintenanceCode] = useState('');
   const [maintenanceError, setMaintenanceError] = useState<string | null>(null);
@@ -149,7 +151,7 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            الصيانة والنظافة
+            الخدمات والمؤشرات
           </button>
           <button
             type="button"
@@ -202,24 +204,24 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
           </form>
         )}
 
-        {/* 2. Maintenance OR Cleaning & Pest Control Form */}
+        {/* 2. Maintenance, Cleaning & Pest Control, OR KPI Read-Only Viewer Form */}
         {mode === 'maintenance' && (
           <form onSubmit={handleMaintenanceSubmit} className="flex flex-col gap-4 text-xs">
-            {/* Sub-selector: Maintenance Account vs Cleaning/Pest Control Account */}
-            <div className="grid grid-cols-2 gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 font-bold">
+            {/* Sub-selector: Maintenance vs Cleaning/Pest Control vs KPI Viewer */}
+            <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 font-bold text-[11px]">
               <button
                 type="button"
                 onClick={() => {
                   setStaffTrack('maintenance');
                   setMaintenanceError(null);
                 }}
-                className={`py-2 px-2 rounded-lg transition ${
+                className={`py-2 px-1.5 rounded-lg transition ${
                   staffTrack === 'maintenance'
                     ? 'bg-emerald-600 text-white shadow-xs'
                     : 'text-slate-700 hover:bg-white'
                 }`}
               >
-                حساب الصيانة (4 أقسام)
+                الصيانة (4 أقسام)
               </button>
               <button
                 type="button"
@@ -227,13 +229,27 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
                   setStaffTrack('cleaning');
                   setMaintenanceError(null);
                 }}
-                className={`py-2 px-2 rounded-lg transition ${
+                className={`py-2 px-1.5 rounded-lg transition ${
                   staffTrack === 'cleaning'
                     ? 'bg-sky-600 text-white shadow-xs'
                     : 'text-slate-700 hover:bg-white'
                 }`}
               >
-                حساب النظافة والآفات
+                النظافة والآفات
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setStaffTrack('viewer');
+                  setMaintenanceError(null);
+                }}
+                className={`py-2 px-1.5 rounded-lg transition ${
+                  staffTrack === 'viewer'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-slate-700 hover:bg-white'
+                }`}
+              >
+                متابعة المؤشرات (KPI)
               </button>
             </div>
 
@@ -241,12 +257,18 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
               className={`rounded-xl p-3 text-[11px] leading-relaxed border ${
                 staffTrack === 'cleaning'
                   ? 'bg-sky-50 border-sky-200 text-sky-900'
+                  : staffTrack === 'viewer'
+                  ? 'bg-indigo-50 border-indigo-200 text-indigo-900'
                   : 'bg-emerald-50 border-emerald-200 text-emerald-900'
               }`}
             >
               {staffTrack === 'cleaning' ? (
                 <>
                   <strong>بوابة الخدمات (النظافة ومكافحة الحشرات والقوارض):</strong> تعرض فقط بلاغات النظافة والآفات مستقلة عن الصيانة، مع إرفاق صورة المعالجة لاعتماد رائد المبنى.
+                </>
+              ) : staffTrack === 'viewer' ? (
+                <>
+                  <strong>حساب متابعة الأداء والمؤشرات (عرض فقط بدون صلاحيات تعديل):</strong> يتيح استعراض لوحة المعلومات ومؤشرات أداء رواد المباني (KPI) ونسب إتمام المسح الشامل للمباني الـ 34 دون إمكانية تعديل أي بيانات في النظام.
                 </>
               ) : (
                 <>
@@ -259,6 +281,8 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
               <label className="text-slate-700 font-bold">
                 {staffTrack === 'cleaning'
                   ? 'اسم مشرف / فني النظافة ومكافحة الآفات:'
+                  : staffTrack === 'viewer'
+                  ? 'اسم مسؤول المتابعة / المراقب (اختياري):'
                   : 'اسم فني / مسؤول الصيانة:'}
               </label>
               <input
@@ -268,16 +292,22 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
                 placeholder={
                   staffTrack === 'cleaning'
                     ? 'مثال: مشرف النظافة / فريق مكافحة الآفات...'
+                    : staffTrack === 'viewer'
+                    ? 'مثال: إدارة الإسكان / متابع مؤشرات الأداء...'
                     : 'مثال: م. خالد / فني السباكة والكهرباء...'
                 }
-                required
+                required={staffTrack !== 'viewer'}
                 className="bg-slate-50 border border-slate-300 text-slate-900 rounded-xl px-3 py-2.5 placeholder-slate-400"
               />
             </div>
 
             <div className="flex flex-col gap-1.5">
               <label className="text-slate-700 font-bold">
-                {staffTrack === 'cleaning' ? 'كود دخول النظافة والخدمات:' : 'كود دخول الصيانة:'}
+                {staffTrack === 'cleaning'
+                  ? 'كود دخول النظافة والخدمات:'
+                  : staffTrack === 'viewer'
+                  ? 'كود دخول متابعة الأداء والمؤشرات (عرض فقط):'
+                  : 'كود دخول الصيانة:'}
               </label>
               <div className="relative">
                 <KeyRound className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -288,6 +318,8 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
                   placeholder={
                     staffTrack === 'cleaning'
                       ? 'أدخل كود دخول النظافة المعتمد من المشرف...'
+                      : staffTrack === 'viewer'
+                      ? 'أدخل كود متابعة المؤشرات (VW-...)...'
                       : 'أدخل كود دخول الصيانة المعتمد من المشرف...'
                   }
                   required
@@ -307,6 +339,8 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
               className={`w-full py-2.5 text-white font-bold rounded-xl transition flex items-center justify-center gap-2 shadow-sm ${
                 staffTrack === 'cleaning'
                   ? 'bg-sky-600 hover:bg-sky-700'
+                  : staffTrack === 'viewer'
+                  ? 'bg-indigo-600 hover:bg-indigo-700'
                   : 'bg-emerald-600 hover:bg-emerald-700'
               }`}
             >
@@ -314,6 +348,8 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
               <span>
                 {staffTrack === 'cleaning'
                   ? 'دخول بوابة النظافة ومكافحة الآفات'
+                  : staffTrack === 'viewer'
+                  ? 'دخول لوحة مؤشرات الأداء والمتابعة (عرض فقط)'
                   : 'دخول بوابة الصيانة المكثفة'}
               </span>
             </button>

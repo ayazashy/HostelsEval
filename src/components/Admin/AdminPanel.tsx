@@ -1032,7 +1032,7 @@ service cloud.firestore {
               </label>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
               <div className="bg-white/10 border border-white/15 rounded-xl p-3 flex items-center justify-between">
                 <div>
                   <span className="text-emerald-300 font-bold block">بوابة الصيانة المكثفة وماكسمو (4 أقسام)</span>
@@ -1069,6 +1069,28 @@ service cloud.firestore {
                     title="نسخ كود النظافة والآفات"
                   >
                     {copiedCode === adminCreds.cleaning ? (
+                      <Check className="w-4 h-4 text-emerald-400" />
+                    ) : (
+                      <Copy className="w-4 h-4" />
+                    )}
+                  </button>
+                )}
+              </div>
+
+              <div className="bg-white/10 border border-white/15 rounded-xl p-3 flex items-center justify-between">
+                <div>
+                  <span className="text-indigo-300 font-bold block">متابعة الأداء ومؤشرات الرواد (عرض فقط - KPI)</span>
+                  <span className="font-mono text-sm font-black mt-0.5 block">
+                    {adminCreds?.viewer || 'غير محمّل محلياً'}
+                  </span>
+                </div>
+                {adminCreds?.viewer && (
+                  <button
+                    onClick={() => handleCopy(adminCreds.viewer!)}
+                    className="p-2 rounded-lg bg-white/10 hover:bg-white/20"
+                    title="نسخ كود متابعة الأداء والمؤشرات"
+                  >
+                    {copiedCode === adminCreds.viewer ? (
                       <Check className="w-4 h-4 text-emerald-400" />
                     ) : (
                       <Copy className="w-4 h-4" />

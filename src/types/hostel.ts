@@ -113,7 +113,7 @@ export interface MaintenanceTicketInfo {
 
 export interface MaintenanceAuth {
   technicianName: string;
-  role?: 'maintenance' | 'cleaning';
+  role?: 'maintenance' | 'cleaning' | 'viewer';
   isAuthenticated: boolean;
   token: string;
 }

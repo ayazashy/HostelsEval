@@ -19,6 +19,7 @@ import {
   AUTH_HASH_SALT,
   MAINTENANCE_CODE_HASH,
   CLEANING_CODE_HASH,
+  VIEWER_CODE_HASH,
   LEADER_CODE_HASHES,
 } from '../config/authHashes';
 import {
@@ -50,6 +51,7 @@ const ADMIN_CREDENTIALS_CACHE_KEY = 'hostels_admin_credentials_cache';
 export interface PrivateCredentialsBundle {
   maintenance?: string;
   cleaning?: string;
+  viewer?: string;
   leaders?: Record<string, string>;
 }
 
@@ -193,7 +195,7 @@ export function lockAdminWorkspace(): void {
 export async function loginMaintenanceWithCode(
   enteredCode: string,
   technicianName?: string,
-  role: 'maintenance' | 'cleaning' = 'maintenance'
+  role: 'maintenance' | 'cleaning' | 'viewer' = 'maintenance'
 ): Promise<{ success: boolean; error?: string; auth?: MaintenanceAuth }> {
   const cleanEntered = enteredCode.trim();
   if (!cleanEntered) {
@@ -203,7 +205,12 @@ export async function loginMaintenanceWithCode(
     };
   }
 
-  const targetHash = role === 'cleaning' ? CLEANING_CODE_HASH : MAINTENANCE_CODE_HASH;
+  const targetHash =
+    role === 'cleaning'
+      ? CLEANING_CODE_HASH
+      : role === 'viewer'
+      ? VIEWER_CODE_HASH
+      : MAINTENANCE_CODE_HASH;
   const enteredHash = await computeSaltedSha256(cleanEntered);
   const isMatch = enteredHash === targetHash;
 
@@ -213,6 +220,8 @@ export async function loginMaintenanceWithCode(
       error:
         role === 'cleaning'
           ? 'كود دخول قسم النظافة ومكافحة الآفات غير صحيح. يرجى التحقق والمحاولة مجدداً.'
+          : role === 'viewer'
+          ? 'كود دخول متابعة الأداء والمؤشرات غير صحيح. يرجى التحقق والمحاولة مجدداً.'
           : 'كود دخول الصيانة غير صحيح. يرجى التحقق والمحاولة مجدداً.',
     };
   }
@@ -220,6 +229,8 @@ export async function loginMaintenanceWithCode(
   const defaultName =
     role === 'cleaning'
       ? 'فريق النظافة ومكافحة الآفات'
+      : role === 'viewer'
+      ? 'متابع الأداء والمؤشرات (عرض فقط)'
       : 'فريق الصيانة المكثفة وماكسمو';
 
   const authData: MaintenanceAuth = {
@@ -239,6 +250,8 @@ export async function loginMaintenanceWithCode(
     details:
       role === 'cleaning'
         ? 'دخول حساب الخدمات لبوابة النظافة ومكافحة الحشرات والقوارض'
+        : role === 'viewer'
+        ? 'دخول حساب متابعة الأداء والمؤشرات (صلاحية قراءة وعرض فقط بدون تعديل)'
         : 'دخول حساب الصيانة لبوابة متابعة البلاغات وماكسمو',
   });
 

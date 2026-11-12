@@ -156,12 +156,15 @@ export function clearMaintenanceSession(): void {
 }
 
 /**
- * Check if the caller has any authenticated role (Admin, Leader, or Maintenance)
+ * Check if the caller has any authenticated WRITE role (Admin, Leader, or Maintenance/Cleaning).
+ * Note: 'viewer' role is strictly Read-Only and has NO write permissions.
  */
 export function isCallerAuthenticated(): boolean {
+  const maint = checkActiveMaintenanceAuth();
+  const hasMaintenanceWriteRole = maint !== null && maint.role !== 'viewer';
   return (
     checkIsAdminUnlocked() ||
     checkActiveLeaderAuth() !== null ||
-    checkActiveMaintenanceAuth() !== null
+    hasMaintenanceWriteRole
   );
 }

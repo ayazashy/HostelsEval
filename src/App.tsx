@@ -14,6 +14,7 @@ import { DEFAULT_BUILDINGS } from './config/buildings';
 import { Navbar, AppViewMode } from './components/Common/Navbar';
 import { CampusOverview } from './components/Dashboard/CampusOverview';
 import { BuildingDetail } from './components/Dashboard/BuildingDetail';
+import { LeadersKPIDashboard } from './components/Dashboard/LeadersKPIDashboard';
 import { LeaderPortal } from './components/Inspector/LeaderPortal';
 import { MaintenancePortal } from './components/Maintenance/MaintenancePortal';
 import { OfficialReportModal } from './components/Reports/OfficialReportModal';
@@ -51,18 +52,31 @@ export function App() {
       const saved = localStorage.getItem('hostels_active_view');
       if (
         saved &&
-        ['campus', 'building_detail', 'leader_portal', 'maintenance_portal', 'admin_panel'].includes(
-          saved
-        )
+        [
+          'campus',
+          'leaders_kpi',
+          'building_detail',
+          'leader_portal',
+          'maintenance_portal',
+          'admin_panel',
+        ].includes(saved)
       ) {
         if (saved === 'admin_panel' && !isAdminUnlocked()) return 'campus';
-        if (saved === 'maintenance_portal' && !isAdminUnlocked() && !getActiveMaintenanceAuth()) {
-          return 'campus';
+        const activeMaint = getActiveMaintenanceAuth();
+        if (
+          saved === 'maintenance_portal' &&
+          !isAdminUnlocked() &&
+          (!activeMaint || activeMaint.role === 'viewer')
+        ) {
+          return activeMaint?.role === 'viewer' ? 'leaders_kpi' : 'campus';
         }
         return saved as AppViewMode;
       }
     } catch {}
-    if (getActiveMaintenanceAuth()) return 'maintenance_portal';
+    const initialMaint = getActiveMaintenanceAuth();
+    if (initialMaint) {
+      return initialMaint.role === 'viewer' ? 'leaders_kpi' : 'maintenance_portal';
+    }
     if (getActiveLeaderAuth()) return 'leader_portal';
     if (isAdminUnlocked()) return 'admin_panel';
     return 'campus';
@@ -208,7 +222,7 @@ export function App() {
   const handleMaintenanceLogin = (mAuth: MaintenanceAuth) => {
     setMaintenanceAuth(mAuth);
     setShowLoginModal(false);
-    handleNavigate('maintenance_portal');
+    handleNavigate(mAuth.role === 'viewer' ? 'leaders_kpi' : 'maintenance_portal');
   };
 
   const handleImpersonate = (impersonatedAuth: BuildingLeaderAuth) => {
@@ -292,13 +306,28 @@ export function App() {
           />
         )}
 
+        {activeView === 'leaders_kpi' && (
+          <LeadersKPIDashboard
+            buildings={buildings}
+            allEvaluations={allEvaluations}
+            isReadOnlyViewer={maintenanceAuth?.role === 'viewer' && !isAdmin}
+            viewerName={maintenanceAuth?.technicianName}
+            onSelectBuilding={(bId) => {
+              handleSelectBuilding(bId);
+              handleNavigate('building_detail');
+            }}
+          />
+        )}
+
         {activeView === 'building_detail' && (
           <BuildingDetail
             building={currentBuilding}
             evaluations={currentBuildingEvals}
             onBack={() => handleNavigate('campus')}
             onOpenAudit={() => {
-              if (isAdmin || auth) {
+              if (maintenanceAuth?.role === 'viewer' && !isAdmin && !auth) {
+                handleNavigate('leader_portal');
+              } else if (isAdmin || auth) {
                 handleNavigate('leader_portal');
               } else {
                 handleOpenLogin('leader');
@@ -333,7 +362,7 @@ export function App() {
               maintenanceAuth?.technicianName ||
               (isAdmin ? 'المشرف العام (إدارة الصيانة والخدمات)' : 'فريق الصيانة')
             }
-            portalRole={maintenanceAuth?.role || 'maintenance'}
+            portalRole={maintenanceAuth?.role === 'cleaning' ? 'cleaning' : 'maintenance'}
             isAdmin={isAdmin}
             onRefreshEvaluations={loadAllEvaluations}
           />
