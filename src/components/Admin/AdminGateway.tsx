@@ -3,22 +3,32 @@
 // ============================================================================
 
 import React, { useState } from 'react';
-import { unlockAdminWorkspace, loginBuildingLeaderWithCode } from '../../services/authService';
-import { BuildingLeaderAuth } from '../../types/hostel';
-import { Lock, KeyRound, ArrowLeft, ShieldCheck, X } from 'lucide-react';
+import {
+  unlockAdminWorkspace,
+  loginBuildingLeaderWithCode,
+  loginMaintenanceWithCode,
+} from '../../services/authService';
+import { BuildingLeaderAuth, MaintenanceAuth } from '../../types/hostel';
+import { Lock, KeyRound, ArrowLeft, ShieldCheck, Wrench, X } from 'lucide-react';
 
 interface AdminGatewayProps {
   onAdminUnlocked: () => void;
   onLeaderLogin: (auth: BuildingLeaderAuth) => void;
+  onMaintenanceLogin?: (auth: MaintenanceAuth) => void;
   onClose?: () => void;
+  initialMode?: 'leader' | 'maintenance' | 'admin';
+  initialBuildingId?: string;
 }
 
 export const AdminGateway: React.FC<AdminGatewayProps> = ({
   onAdminUnlocked,
   onLeaderLogin,
+  onMaintenanceLogin,
   onClose,
+  initialMode = 'leader',
+  initialBuildingId = 'B14',
 }) => {
-  const [mode, setMode] = useState<'admin' | 'leader'>('admin');
+  const [mode, setMode] = useState<'leader' | 'maintenance' | 'admin'>(initialMode);
 
   // Admin states
   const [adminPassword, setAdminPassword] = useState('');
@@ -26,10 +36,15 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
   const [isLoading, setIsLoading] = useState(false);
 
   // Leader states
-  const [buildingId, setBuildingId] = useState('B14');
+  const [buildingId, setBuildingId] = useState(initialBuildingId);
   const [leaderCode, setLeaderCode] = useState('');
   const [inspectorName, setInspectorName] = useState('');
   const [leaderError, setLeaderError] = useState<string | null>(null);
+
+  // Maintenance states
+  const [technicianName, setTechnicianName] = useState('');
+  const [maintenanceCode, setMaintenanceCode] = useState('');
+  const [maintenanceError, setMaintenanceError] = useState<string | null>(null);
 
   const handleAdminUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,6 +77,20 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
     }
   };
 
+  const handleMaintenanceSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setMaintenanceError(null);
+
+    const res = loginMaintenanceWithCode(maintenanceCode, technicianName);
+    if (res.success && res.auth) {
+      if (onMaintenanceLogin) {
+        onMaintenanceLogin(res.auth);
+      }
+    } else {
+      setMaintenanceError(res.error || 'كود دخول الصيانة غير صحيح');
+    }
+  };
+
   return (
     <div
       className={
@@ -70,7 +99,7 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
           : 'min-h-screen bg-slate-100 flex flex-col justify-center items-center p-4'
       }
     >
-      <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 shadow-2xl flex flex-col gap-6 relative">
+      <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl p-5 sm:p-7 shadow-2xl flex flex-col gap-5 relative">
         {onClose && (
           <button
             onClick={onClose}
@@ -89,7 +118,7 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
             className="housing-brand-logo-card mb-2"
             style={{ height: '44px', width: 'auto', maxWidth: '140px', objectFit: 'contain' }}
           />
-          <h1 className="text-lg font-bold text-slate-900 leading-snug">
+          <h1 className="text-base sm:text-lg font-bold text-slate-900 leading-snug">
             تقييم ومتابعة مرافق مباني الإسكان الطلابي
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -97,29 +126,40 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
           </p>
         </div>
 
-        {/* Mode Switcher */}
-        <div className="grid grid-cols-2 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
-          <button
-            type="button"
-            onClick={() => setMode('admin')}
-            className={`py-2 rounded-lg transition ${
-              mode === 'admin'
-                ? 'bg-white text-blue-700 shadow-sm'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            بوابة المشرف
-          </button>
+        {/* Mode Switcher (3 Roles) */}
+        <div className="grid grid-cols-3 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold gap-1">
           <button
             type="button"
             onClick={() => setMode('leader')}
-            className={`py-2 rounded-lg transition ${
+            className={`py-2 px-1 rounded-lg transition ${
               mode === 'leader'
                 ? 'bg-white text-blue-700 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            دخول رائد المبنى
+            رائد المبنى
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('maintenance')}
+            className={`py-2 px-1 rounded-lg transition ${
+              mode === 'maintenance'
+                ? 'bg-white text-emerald-700 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            فريق الصيانة
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('admin')}
+            className={`py-2 px-1 rounded-lg transition ${
+              mode === 'admin'
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            المشرف العام
           </button>
         </div>
 
@@ -153,7 +193,7 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition flex items-center justify-center gap-2 shadow-sm"
+              className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl transition flex items-center justify-center gap-2 shadow-sm"
             >
               <ShieldCheck className="w-4 h-4" />
               <span>{isLoading ? 'جاري التحقق...' : 'دخول المشرف'}</span>
@@ -161,7 +201,57 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
           </form>
         )}
 
-        {/* 2. Leader Form */}
+        {/* 2. Maintenance Form */}
+        {mode === 'maintenance' && (
+          <form onSubmit={handleMaintenanceSubmit} className="flex flex-col gap-4 text-xs">
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-emerald-900 text-[11px] leading-relaxed">
+              <strong>بوابة الصيانة وماكسمو:</strong> تتيح استعراض البلاغات الميدانية، تسجيل رقم البلاغ في ماكسمو، إرفاق مستند البلاغ (PDF أو صورة)، وإغلاق البلاغ بعد إتمام الإصلاح.
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-slate-700 font-bold">اسم الفني / مسؤول الصيانة:</label>
+              <input
+                type="text"
+                value={technicianName}
+                onChange={(e) => setTechnicianName(e.target.value)}
+                placeholder="مثال: م. خالد / فريق صيانة السباكة..."
+                required
+                className="bg-slate-50 border border-slate-300 text-slate-900 rounded-xl px-3 py-2.5 placeholder-slate-400"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-slate-700 font-bold">كود دخول الصيانة:</label>
+              <div className="relative">
+                <KeyRound className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="password"
+                  value={maintenanceCode}
+                  onChange={(e) => setMaintenanceCode(e.target.value)}
+                  placeholder="أدخل كود الصيانة (الافتراضي: MAXIMO-2026)..."
+                  required
+                  className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-xl pr-9 pl-4 py-2.5 placeholder-slate-400 font-mono"
+                />
+              </div>
+            </div>
+
+            {maintenanceError && (
+              <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs">
+                {maintenanceError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition flex items-center justify-center gap-2 shadow-sm"
+            >
+              <Wrench className="w-4 h-4" />
+              <span>دخول بوابة الصيانة والبلاغات</span>
+            </button>
+          </form>
+        )}
+
+        {/* 3. Leader Form */}
         {mode === 'leader' && (
           <form onSubmit={handleLeaderSubmit} className="flex flex-col gap-4 text-xs">
             <div className="flex flex-col gap-1.5">

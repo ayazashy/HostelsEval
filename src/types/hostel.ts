@@ -39,6 +39,73 @@ export interface FacilityCategoryConfig {
   wingTemplates: Record<number, FixtureTemplate[]>;
 }
 
+export interface FacilityMediaItem {
+  id: string;
+  type: 'image' | 'video' | 'pdf';
+  url: string; // Base64 data URI
+  name?: string;
+  capturedAt: string;
+  capturedBy?: string;
+}
+
+export type FacilityHistoryAction =
+  | 'inspection'
+  | 'maximo_registered'
+  | 'maintenance_closed'
+  | 'leader_verified'
+  | 'leader_rejected_reopened';
+
+export interface FacilityHistoryEvent {
+  id: string;
+  timestamp: string;
+  action: FacilityHistoryAction;
+  actorName: string;
+  actorRole: 'leader' | 'maintenance' | 'admin';
+  status: FixtureStatus;
+  defects?: string[];
+  notes?: string;
+  media?: FacilityMediaItem[];
+  maximoNumber?: string;
+  maximoAttachmentUrl?: string;
+  maximoAttachmentName?: string;
+  evaluationRating?: number;
+}
+
+export type MaintenanceTicketStatus =
+  | 'open'
+  | 'in_progress'
+  | 'pending_evaluation'
+  | 'verified_closed'
+  | 'reopened';
+
+export interface MaintenanceTicketInfo {
+  status: MaintenanceTicketStatus;
+  maximoNumber?: string;
+  maximoAttachmentBase64?: string;
+  maximoAttachmentName?: string;
+  maximoAttachmentType?: 'pdf' | 'image';
+  registeredAt?: string;
+  registeredBy?: string;
+  closedAt?: string;
+  closedBy?: string;
+  closureNotes?: string;
+  closurePhotoBase64?: string;
+  reopenedAt?: string;
+  reopenedCount?: number;
+  lastRejectionReason?: string;
+  lastRejectionPhotoBase64?: string;
+  verifiedAt?: string;
+  verifiedBy?: string;
+  serviceRating?: number;
+  serviceFeedback?: string;
+}
+
+export interface MaintenanceAuth {
+  technicianName: string;
+  isAuthenticated: boolean;
+  token: string;
+}
+
 export interface FixtureEvaluation {
   id: string; // e.g. B14-W2-F3-BTH-SNK-01
   buildingId: string; // e.g. 'B14'
@@ -53,6 +120,9 @@ export interface FixtureEvaluation {
   rating: number;
   photoBase64?: string;
   hasPhoto: boolean;
+  media?: FacilityMediaItem[];
+  history?: FacilityHistoryEvent[];
+  maintenanceTicket?: MaintenanceTicketInfo;
   inspectorName?: string;
   inspectorId?: string;
   updatedAt: string;
@@ -76,6 +146,9 @@ export interface EvaluationHistoryEntry {
   notes?: string;
   rating: number;
   photoBase64?: string;
+  media?: FacilityMediaItem[];
+  maximoNumber?: string;
+  ticketStatus?: MaintenanceTicketStatus;
   inspectorName?: string;
   timestamp: string; // ISO string
   isResolved?: boolean;
@@ -188,7 +261,7 @@ export interface AuditLogEntry {
   id: string;
   timestamp: string; // ISO string
   actorName: string;
-  actorRole: 'admin' | 'leader' | 'impersonated';
+  actorRole: 'admin' | 'leader' | 'maintenance' | 'impersonated';
   buildingId: string;
   action:
     | 'inspection_saved'
@@ -196,7 +269,9 @@ export interface AuditLogEntry {
     | 'feature_toggled'
     | 'impersonation_started'
     | 'admin_unlocked'
-    | 'cloud_sync';
+    | 'cloud_sync'
+    | 'maintenance_update'
+    | 'ticket_evaluated';
   details: string;
 }
 

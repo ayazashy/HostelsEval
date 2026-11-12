@@ -3,16 +3,18 @@
 // Zero Circular Dependencies • Isolated State Management
 // ============================================================================
 
-import { BuildingLeaderAuth } from '../types/hostel';
+import { BuildingLeaderAuth, MaintenanceAuth } from '../types/hostel';
 import { DecryptedAdminVault } from './cryptoVault';
 
 export const ADMIN_STORAGE_SESSION_KEY = 'hostels_admin_active_session_v2';
 export const LEADER_STORAGE_SESSION_KEY = 'hostels_leader_active_auth_v2';
+export const MAINTENANCE_STORAGE_SESSION_KEY = 'hostels_maintenance_active_auth_v2';
 
 // In-Memory Session Cache
 let inMemoryAdminUnlocked = false;
 let inMemoryAdminVault: DecryptedAdminVault | null = null;
 let inMemoryActiveLeaderAuth: BuildingLeaderAuth | null = null;
+let inMemoryActiveMaintenanceAuth: MaintenanceAuth | null = null;
 
 /**
  * Check if the admin is currently unlocked (either in-memory or persisted in localStorage)
@@ -112,8 +114,54 @@ export function clearLeaderSession(): void {
 }
 
 /**
- * Check if the caller has any authenticated role (Admin or Leader)
+ * Check active Maintenance authentication (either in-memory or persisted in localStorage)
+ */
+export function checkActiveMaintenanceAuth(): MaintenanceAuth | null {
+  if (inMemoryActiveMaintenanceAuth) {
+    return inMemoryActiveMaintenanceAuth;
+  }
+  try {
+    const stored = localStorage.getItem(MAINTENANCE_STORAGE_SESSION_KEY);
+    if (stored) {
+      const parsed: MaintenanceAuth = JSON.parse(stored);
+      if (parsed && parsed.isAuthenticated && parsed.technicianName) {
+        inMemoryActiveMaintenanceAuth = parsed;
+        return inMemoryActiveMaintenanceAuth;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+/**
+ * Persist maintenance session in memory and localStorage
+ */
+export function setMaintenanceSession(auth: MaintenanceAuth): void {
+  inMemoryActiveMaintenanceAuth = auth;
+  try {
+    localStorage.setItem(MAINTENANCE_STORAGE_SESSION_KEY, JSON.stringify(auth));
+  } catch (err) {
+    console.warn('Failed to persist maintenance session:', err);
+  }
+}
+
+/**
+ * Clear maintenance session
+ */
+export function clearMaintenanceSession(): void {
+  inMemoryActiveMaintenanceAuth = null;
+  try {
+    localStorage.removeItem(MAINTENANCE_STORAGE_SESSION_KEY);
+  } catch {}
+}
+
+/**
+ * Check if the caller has any authenticated role (Admin, Leader, or Maintenance)
  */
 export function isCallerAuthenticated(): boolean {
-  return checkIsAdminUnlocked() || checkActiveLeaderAuth() !== null;
+  return (
+    checkIsAdminUnlocked() ||
+    checkActiveLeaderAuth() !== null ||
+    checkActiveMaintenanceAuth() !== null
+  );
 }

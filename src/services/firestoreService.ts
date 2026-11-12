@@ -16,7 +16,14 @@ import {
   onSnapshot,
 } from 'firebase/firestore';
 import { db } from './dataConnector';
-import { FixtureEvaluation, EvaluationHistoryEntry, CampusMapConfig } from '../types/hostel';
+import {
+  FixtureEvaluation,
+  EvaluationHistoryEntry,
+  CampusMapConfig,
+  FacilityHistoryEvent,
+  FacilityMediaItem,
+  MaintenanceTicketInfo,
+} from '../types/hostel';
 import {
   getDecodedSecurityCode,
   getAdminRawSecurityCode,
@@ -136,77 +143,183 @@ export function removeFromLocalCache(id: string): void {
 }
 
 /**
- * Helper to strip any undefined values from an object before sending to Firestore
+ * Helper to recursively strip any undefined values from an object or array before sending to Firestore
  * (Firestore SDK throws an error if any field in an object is undefined).
  */
-export function stripUndefinedValues<T extends Record<string, any>>(obj: T): T {
+export function stripUndefinedValues<T>(obj: T): T {
+  if (obj === null || obj === undefined || typeof obj !== 'object') {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj
+      .filter((item) => item !== undefined)
+      .map((item) => stripUndefinedValues(item)) as unknown as T;
+  }
   const clean: any = {};
-  for (const [key, val] of Object.entries(obj)) {
+  for (const [key, val] of Object.entries(obj as Record<string, any>)) {
     if (val !== undefined) {
-      clean[key] = val;
+      clean[key] = stripUndefinedValues(val);
     }
   }
   return clean;
 }
 
+/**
+ * Helper to bound history array size so Firestore documents stay well under 1 MiB.
+ */
+function appendFacilityHistoryEvent(
+  existingHistory: FacilityHistoryEvent[] | undefined,
+  newEvent: FacilityHistoryEvent
+): FacilityHistoryEvent[] {
+  const list = [newEvent, ...(existingHistory || [])].slice(0, 25);
+  return list.map((ev, idx) => {
+    // Keep media Base64 on the 4 most recent history entries; strip heavy data URLs on older ones
+    if (idx >= 4) {
+      const copy = { ...ev };
+      delete copy.media;
+      delete copy.maximoAttachmentUrl;
+      return copy;
+    }
+    return ev;
+  });
+}
+
 // ----------------------------------------------------------------------------
 // 1. Save or Update Single Fixture Evaluation (Protected by Secret Token Gate)
 // ----------------------------------------------------------------------------
-export async function saveEvaluation(evaluation: FixtureEvaluation): Promise<CloudSaveResult> {
+export async function saveEvaluation(
+  evaluation: FixtureEvaluation,
+  historyOverride?: Partial<FacilityHistoryEvent>
+): Promise<CloudSaveResult> {
   // Check if caller is authorized with decrypted secret code
   const secretCode = getDecodedSecurityCode();
 
-  // If user is a public visitor (no leader PIN, no admin password), BLOCK write immediately:
+  // If user is a public visitor (no leader PIN, no maintenance PIN, no admin password), BLOCK write immediately:
   if (!secretCode) {
     console.warn('[HostelsEval] Write blocked: Public users have read-only access.');
     return {
       success: false,
       cloudSynced: false,
-      cloudError: 'عفواً، لا تملك تصريح كتابة. يجب تسجيل الدخول كـ رائد مبنى أو مشرف لحفظ التقييمات.',
+      cloudError:
+        'عفواً، لا تملك تصريح كتابة. يجب تسجيل الدخول كـ رائد مبنى أو صيانة أو مشرف لحفظ التحديثات.',
       code: 'permission-denied',
     };
   }
 
+  const nowIso = new Date().toISOString();
+  const prevEval = getLocalCache()[evaluation.id];
+
+  // Sync media[] and primary photoBase64 for full backward compatibility
+  let mediaList: FacilityMediaItem[] = evaluation.media ? [...evaluation.media] : [];
+  if (evaluation.photoBase64 && mediaList.length === 0) {
+    mediaList = [
+      {
+        id: `img_${Date.now()}`,
+        type: 'image',
+        url: evaluation.photoBase64,
+        capturedAt: nowIso,
+        capturedBy: evaluation.inspectorName,
+      },
+    ];
+  }
+  const firstImage = mediaList.find((m) => m.type === 'image');
+  const primaryPhoto = firstImage ? firstImage.url : evaluation.photoBase64;
+
+  // Manage Maintenance Ticket Lifecycle automatically when reporting an issue
+  let ticket: MaintenanceTicketInfo | undefined =
+    evaluation.maintenanceTicket || prevEval?.maintenanceTicket;
+
+  if (evaluation.status !== 'operational') {
+    if (!ticket || ticket.status === 'verified_closed') {
+      ticket = {
+        status: 'open',
+      };
+    }
+  } else if (!historyOverride && ticket && ticket.status !== 'pending_evaluation') {
+    ticket = {
+      ...ticket,
+      status: 'verified_closed',
+      verifiedAt: nowIso,
+      verifiedBy: evaluation.inspectorName || 'رائد المبنى',
+    };
+  }
+
+  // Append event to facility's permanent history log
+  const newHistoryEvent: FacilityHistoryEvent = {
+    id: `hist_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    timestamp: nowIso,
+    action: historyOverride?.action || 'inspection',
+    actorName: historyOverride?.actorName || evaluation.inspectorName || 'فاحص ميداني',
+    actorRole: historyOverride?.actorRole || 'leader',
+    status: evaluation.status,
+    defects: evaluation.defects || [],
+    notes: historyOverride?.notes !== undefined ? historyOverride.notes : evaluation.notes,
+    media: historyOverride?.media !== undefined ? historyOverride.media : mediaList.slice(0, 3),
+    maximoNumber: historyOverride?.maximoNumber || ticket?.maximoNumber,
+    maximoAttachmentUrl: historyOverride?.maximoAttachmentUrl,
+    maximoAttachmentName: historyOverride?.maximoAttachmentName || ticket?.maximoAttachmentName,
+    evaluationRating: historyOverride?.evaluationRating,
+  };
+
+  const mergedHistory = appendFacilityHistoryEvent(
+    evaluation.history || prevEval?.history,
+    newHistoryEvent
+  );
+
+  const enrichedEvaluation: FixtureEvaluation = {
+    ...evaluation,
+    photoBase64: primaryPhoto,
+    hasPhoto: !!primaryPhoto || mediaList.length > 0,
+    media: mediaList,
+    maintenanceTicket: ticket,
+    history: mergedHistory,
+    updatedAt: nowIso,
+  };
+
   // Update local cache for instant UI responsiveness
-  saveToLocalCache(evaluation);
+  saveToLocalCache(enrichedEvaluation);
 
   // Record timeline scan event
   recordEvaluationHistory({
-    id: `scan_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-    fixtureId: evaluation.id,
-    buildingId: evaluation.buildingId,
-    floor: evaluation.floor,
-    wingId: evaluation.wingId,
-    categoryCode: evaluation.categoryCode,
-    fixtureTypeCode: evaluation.fixtureTypeCode,
-    fixtureNameAr: evaluation.fixtureTypeCode,
-    status: evaluation.status,
-    defects: evaluation.defects || [],
-    notes: evaluation.notes,
-    rating: evaluation.rating,
-    photoBase64: evaluation.photoBase64,
-    inspectorName: evaluation.inspectorName,
-    timestamp: new Date().toISOString(),
-    isResolved: evaluation.status === 'operational',
+    id: newHistoryEvent.id,
+    fixtureId: enrichedEvaluation.id,
+    buildingId: enrichedEvaluation.buildingId,
+    floor: enrichedEvaluation.floor,
+    wingId: enrichedEvaluation.wingId,
+    categoryCode: enrichedEvaluation.categoryCode,
+    fixtureTypeCode: enrichedEvaluation.fixtureTypeCode,
+    fixtureNameAr: enrichedEvaluation.fixtureTypeCode,
+    status: enrichedEvaluation.status,
+    defects: enrichedEvaluation.defects || [],
+    notes: newHistoryEvent.notes,
+    rating: enrichedEvaluation.rating,
+    photoBase64: primaryPhoto,
+    media: mediaList,
+    maximoNumber: ticket?.maximoNumber,
+    ticketStatus: ticket?.status,
+    inspectorName: newHistoryEvent.actorName,
+    timestamp: nowIso,
+    isResolved:
+      enrichedEvaluation.status === 'operational' || ticket?.status === 'verified_closed',
   });
 
-  // Strip all undefined properties (e.g. photoBase64 if not taken) so Firestore accepts the document
+  // Strip all undefined properties so Firestore accepts the document
   const rawPayload: Record<string, any> = {
-    ...evaluation,
+    ...enrichedEvaluation,
     secretCode, // Attaches secret code to satisfy Firestore Rule: request.resource.data.secretCode == get(...).data.s
-    updatedAt: new Date().toISOString(),
+    updatedAt: nowIso,
   };
   const cleanPayload = stripUndefinedValues(rawPayload);
 
   try {
-    const docRef = doc(db, EVALUATIONS_COLLECTION, evaluation.id);
+    const docRef = doc(db, EVALUATIONS_COLLECTION, enrichedEvaluation.id);
     await setDoc(docRef, cleanPayload, { merge: true });
 
     // Notify listeners of cloud success
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
         new CustomEvent('hostels_cloud_sync_event', {
-          detail: { type: 'save_success', id: evaluation.id },
+          detail: { type: 'save_success', id: enrichedEvaluation.id },
         })
       );
     }
@@ -224,7 +337,7 @@ export async function saveEvaluation(evaluation: FixtureEvaluation): Promise<Clo
         new CustomEvent('hostels_cloud_sync_event', {
           detail: {
             type: 'save_warning',
-            id: evaluation.id,
+            id: enrichedEvaluation.id,
             error: errorMsg,
             code: errorCode,
           },
@@ -238,6 +351,207 @@ export async function saveEvaluation(evaluation: FixtureEvaluation): Promise<Clo
       cloudError: errorMsg,
       code: errorCode,
     };
+  }
+}
+
+// ----------------------------------------------------------------------------
+// 1b. Maintenance & Maximo Ticket Helpers
+// ----------------------------------------------------------------------------
+export async function updateMaximoTicketInfo(
+  evaluation: FixtureEvaluation,
+  params: {
+    maximoNumber: string;
+    attachmentBase64?: string;
+    attachmentName?: string;
+    attachmentType?: 'pdf' | 'image';
+    actorName: string;
+  }
+): Promise<CloudSaveResult> {
+  const nowIso = new Date().toISOString();
+  const prevTicket = evaluation.maintenanceTicket || { status: 'open' };
+  const nextTicket: MaintenanceTicketInfo = {
+    ...prevTicket,
+    status:
+      prevTicket.status === 'open' || prevTicket.status === 'reopened'
+        ? 'in_progress'
+        : prevTicket.status,
+    maximoNumber: params.maximoNumber.trim(),
+    maximoAttachmentBase64: params.attachmentBase64 ?? prevTicket.maximoAttachmentBase64,
+    maximoAttachmentName: params.attachmentName ?? prevTicket.maximoAttachmentName,
+    maximoAttachmentType: params.attachmentType ?? prevTicket.maximoAttachmentType,
+    registeredAt: nowIso,
+    registeredBy: params.actorName,
+  };
+
+  return saveEvaluation(
+    {
+      ...evaluation,
+      maintenanceTicket: nextTicket,
+    },
+    {
+      action: 'maximo_registered',
+      actorName: params.actorName,
+      actorRole: 'maintenance',
+      notes: `تم تسجيل رقم بلاغ ماكسمو (${params.maximoNumber.trim()})${
+        params.attachmentName ? ` مع إرفاق مستند (${params.attachmentName})` : ''
+      }`,
+      maximoNumber: params.maximoNumber.trim(),
+      maximoAttachmentUrl: params.attachmentBase64,
+      maximoAttachmentName: params.attachmentName,
+      media: [],
+    }
+  );
+}
+
+export async function closeMaintenanceTicket(
+  evaluation: FixtureEvaluation,
+  params: {
+    maximoNumber?: string;
+    attachmentBase64?: string;
+    attachmentName?: string;
+    attachmentType?: 'pdf' | 'image';
+    closureNotes: string;
+    closurePhotoBase64?: string;
+    actorName: string;
+  }
+): Promise<CloudSaveResult> {
+  const nowIso = new Date().toISOString();
+  const prevTicket = evaluation.maintenanceTicket || { status: 'open' };
+  const finalMaximoNumber = params.maximoNumber?.trim() || prevTicket.maximoNumber;
+
+  const nextTicket: MaintenanceTicketInfo = {
+    ...prevTicket,
+    status: 'pending_evaluation',
+    maximoNumber: finalMaximoNumber,
+    maximoAttachmentBase64: params.attachmentBase64 ?? prevTicket.maximoAttachmentBase64,
+    maximoAttachmentName: params.attachmentName ?? prevTicket.maximoAttachmentName,
+    maximoAttachmentType: params.attachmentType ?? prevTicket.maximoAttachmentType,
+    closedAt: nowIso,
+    closedBy: params.actorName,
+    closureNotes: params.closureNotes.trim() || 'تم إتمام أعمال الصيانة وإغلاق البلاغ',
+    closurePhotoBase64: params.closurePhotoBase64,
+  };
+
+  const closureMedia: FacilityMediaItem[] = params.closurePhotoBase64
+    ? [
+        {
+          id: `clos_${Date.now()}`,
+          type: 'image',
+          url: params.closurePhotoBase64,
+          name: 'صورة بعد الإصلاح',
+          capturedAt: nowIso,
+          capturedBy: params.actorName,
+        },
+      ]
+    : [];
+
+  return saveEvaluation(
+    {
+      ...evaluation,
+      maintenanceTicket: nextTicket,
+    },
+    {
+      action: 'maintenance_closed',
+      actorName: params.actorName,
+      actorRole: 'maintenance',
+      notes: `إغلاق البلاغ من الصيانة (بانتظار تقييم رائد المبنى): ${nextTicket.closureNotes}`,
+      maximoNumber: finalMaximoNumber,
+      maximoAttachmentUrl: params.attachmentBase64 ?? prevTicket.maximoAttachmentBase64,
+      maximoAttachmentName: params.attachmentName ?? prevTicket.maximoAttachmentName,
+      media: closureMedia,
+    }
+  );
+}
+
+export async function evaluateClosedTicket(
+  evaluation: FixtureEvaluation,
+  params: {
+    isFixed: boolean;
+    rating: number;
+    feedback?: string;
+    photoBase64?: string;
+    leaderName: string;
+  }
+): Promise<CloudSaveResult> {
+  const nowIso = new Date().toISOString();
+  const prevTicket = evaluation.maintenanceTicket || { status: 'pending_evaluation' };
+
+  const evalMedia: FacilityMediaItem[] = params.photoBase64
+    ? [
+        {
+          id: `eval_${Date.now()}`,
+          type: 'image',
+          url: params.photoBase64,
+          name: params.isFixed ? 'توثيق قبول الإصلاح' : 'توثيق رفض الإغلاق الصوري',
+          capturedAt: nowIso,
+          capturedBy: params.leaderName,
+        },
+      ]
+    : [];
+
+  if (params.isFixed) {
+    const nextTicket: MaintenanceTicketInfo = {
+      ...prevTicket,
+      status: 'verified_closed',
+      verifiedAt: nowIso,
+      verifiedBy: params.leaderName,
+      serviceRating: params.rating,
+      serviceFeedback: params.feedback?.trim() || 'تم التحقق ميدانياً وتأكيد جودة الإصلاح',
+    };
+
+    return saveEvaluation(
+      {
+        ...evaluation,
+        status: 'operational',
+        defects: [],
+        rating: 5,
+        notes: params.feedback?.trim() || 'تم الإصلاح واعتماد الإغلاق من رائد المبنى',
+        photoBase64: params.photoBase64 || evaluation.photoBase64,
+        maintenanceTicket: nextTicket,
+      },
+      {
+        action: 'leader_verified',
+        actorName: params.leaderName,
+        actorRole: 'leader',
+        notes: `اعتماد إغلاق البلاغ وتقييم الخدمة (${params.rating}/5): ${
+          params.feedback?.trim() || 'تم التأكد من الإصلاح'
+        }`,
+        evaluationRating: params.rating,
+        maximoNumber: prevTicket.maximoNumber,
+        media: evalMedia,
+      }
+    );
+  } else {
+    // Rejected -> Re-open back to Maintenance!
+    const nextTicket: MaintenanceTicketInfo = {
+      ...prevTicket,
+      status: 'reopened',
+      reopenedAt: nowIso,
+      reopenedCount: (prevTicket.reopenedCount || 0) + 1,
+      lastRejectionReason:
+        params.feedback?.trim() || 'لم يتم الإصلاح فعلياً (رفض إغلاق صوري من رائد المبنى)',
+      lastRejectionPhotoBase64: params.photoBase64,
+      serviceRating: params.rating,
+      serviceFeedback: params.feedback?.trim(),
+    };
+
+    return saveEvaluation(
+      {
+        ...evaluation,
+        status: evaluation.status === 'operational' ? 'needs_maintenance' : evaluation.status,
+        photoBase64: params.photoBase64 || evaluation.photoBase64,
+        maintenanceTicket: nextTicket,
+      },
+      {
+        action: 'leader_rejected_reopened',
+        actorName: params.leaderName,
+        actorRole: 'leader',
+        notes: `رفض الإغلاق وإعادة فتح البلاغ للصيانة (${params.rating}/5): ${nextTicket.lastRejectionReason}`,
+        evaluationRating: params.rating,
+        maximoNumber: prevTicket.maximoNumber,
+        media: evalMedia,
+      }
+    );
   }
 }
 
@@ -532,16 +846,69 @@ export const TIMELINE_STORAGE_KEY = 'hostels_inspection_timeline';
 export function getBuildingTimeline(buildingId?: string): EvaluationHistoryEntry[] {
   try {
     const raw = localStorage.getItem(TIMELINE_STORAGE_KEY);
-    if (!raw) return [];
-    const entries: EvaluationHistoryEntry[] = JSON.parse(raw);
-    if (!Array.isArray(entries)) return [];
+    const localEntries: EvaluationHistoryEntry[] = raw ? JSON.parse(raw) : [];
+    const safeLocal = Array.isArray(localEntries) ? localEntries : [];
 
-    if (buildingId) {
-      return entries.filter(
-        (e) => e.buildingId.toUpperCase() === buildingId.toUpperCase()
-      );
+    // Also collect cloud-synced per-facility history from cached evaluations
+    const allEvals = getAllCachedEvaluations();
+    const cloudHistoryEntries: EvaluationHistoryEntry[] = [];
+
+    for (const ev of allEvals) {
+      if (buildingId && ev.buildingId.toUpperCase() !== buildingId.toUpperCase()) {
+        continue;
+      }
+      if (Array.isArray(ev.history) && ev.history.length > 0) {
+        for (const h of ev.history) {
+          const primaryImg = h.media?.find((m) => m.type === 'image')?.url;
+          cloudHistoryEntries.push({
+            id: h.id,
+            fixtureId: ev.id,
+            buildingId: ev.buildingId,
+            floor: ev.floor,
+            wingId: ev.wingId,
+            categoryCode: ev.categoryCode,
+            fixtureTypeCode: ev.fixtureTypeCode,
+            fixtureNameAr: ev.fixtureTypeCode,
+            status: h.status,
+            defects: h.defects || [],
+            notes: h.notes,
+            rating: h.evaluationRating || ev.rating,
+            photoBase64: primaryImg || ev.photoBase64,
+            media: h.media,
+            maximoNumber: h.maximoNumber || ev.maintenanceTicket?.maximoNumber,
+            ticketStatus: ev.maintenanceTicket?.status,
+            inspectorName: h.actorName,
+            timestamp: h.timestamp,
+            isResolved:
+              h.action === 'leader_verified' ||
+              h.status === 'operational' ||
+              ev.maintenanceTicket?.status === 'verified_closed',
+            resolvedBy:
+              h.action === 'leader_verified' || h.action === 'maintenance_closed'
+                ? h.actorName
+                : ev.maintenanceTicket?.closedBy,
+            resolutionNotes: ev.maintenanceTicket?.closureNotes,
+            resolvedAt: ev.maintenanceTicket?.closedAt,
+          });
+        }
+      }
     }
-    return entries;
+
+    const filteredLocal = buildingId
+      ? safeLocal.filter((e) => e.buildingId.toUpperCase() === buildingId.toUpperCase())
+      : safeLocal;
+
+    const mergedMap = new Map<string, EvaluationHistoryEntry>();
+    for (const item of filteredLocal) {
+      if (item && item.id) mergedMap.set(item.id, item);
+    }
+    for (const item of cloudHistoryEntries) {
+      if (item && item.id) mergedMap.set(item.id, item);
+    }
+
+    return Array.from(mergedMap.values()).sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
   } catch (err) {
     console.warn('[FirestoreService] Failed to load timeline:', err);
     return [];

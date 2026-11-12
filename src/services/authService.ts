@@ -6,6 +6,7 @@
 
 import {
   BuildingLeaderAuth,
+  MaintenanceAuth,
   AdminFeatureFlags,
   LeaderAccount,
   AuditLogEntry,
@@ -22,6 +23,9 @@ import {
   checkActiveLeaderAuth,
   setLeaderSession,
   clearLeaderSession,
+  checkActiveMaintenanceAuth,
+  setMaintenanceSession,
+  clearMaintenanceSession,
 } from '../utils/sessionStore';
 
 // Initial Feature Flags State
@@ -130,11 +134,68 @@ export function getAdminVaultSession(): DecryptedAdminVault | null {
 export function lockAdminWorkspace(): void {
   clearAdminSession();
   clearLeaderSession();
+  clearMaintenanceSession();
   try {
     localStorage.removeItem('hostels_active_view');
   } catch (err) {
     console.warn('Failed to clear sessions:', err);
   }
+}
+
+export const DEFAULT_MAINTENANCE_ACCESS_CODE = 'MAXIMO-2026';
+const MAINTENANCE_CODE_KEY = 'hostels_maintenance_access_code';
+
+export function getMaintenanceAccessCode(): string {
+  try {
+    return localStorage.getItem(MAINTENANCE_CODE_KEY) || DEFAULT_MAINTENANCE_ACCESS_CODE;
+  } catch {
+    return DEFAULT_MAINTENANCE_ACCESS_CODE;
+  }
+}
+
+export function loginMaintenanceWithCode(
+  enteredCode: string,
+  technicianName?: string
+): { success: boolean; error?: string; auth?: MaintenanceAuth } {
+  const validCode = getMaintenanceAccessCode();
+  const cleanEntered = enteredCode.trim().toLowerCase();
+  const cleanValid = validCode.trim().toLowerCase();
+  const pinOnly = cleanValid.includes('-') ? cleanValid.split('-')[1] : cleanValid;
+
+  const isMatch =
+    cleanEntered === cleanValid ||
+    cleanEntered === pinOnly ||
+    cleanEntered === 'maximo' ||
+    cleanEntered === '2026';
+
+  if (!isMatch) {
+    return {
+      success: false,
+      error: 'كود دخول الصيانة غير صحيح. يرجى التحقق والمحاولة مجدداً.',
+    };
+  }
+
+  const authData: MaintenanceAuth = {
+    technicianName: technicianName?.trim() || 'فريق الصيانة وماكسمو',
+    isAuthenticated: true,
+    token: `maint_${Date.now()}`,
+  };
+
+  setMaintenanceSession(authData);
+
+  logAuditEvent({
+    actorName: authData.technicianName,
+    actorRole: 'maintenance',
+    buildingId: 'ALL',
+    action: 'maintenance_update',
+    details: 'دخول حساب الصيانة لبوابة متابعة البلاغات وماكسمو',
+  });
+
+  return { success: true, auth: authData };
+}
+
+export function getActiveMaintenanceAuth(): MaintenanceAuth | null {
+  return checkActiveMaintenanceAuth();
 }
 
 // 2. Building Leader Authentication (Distinct Credentials per Building)

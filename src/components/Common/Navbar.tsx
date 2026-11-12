@@ -1,26 +1,42 @@
 // ============================================================================
-// 🧭 شريط التنقل الرئيسي (Light Mode)
-// تقييم ومتابعة مرافق مباني الإسكان الطلابي
+// 🧭 شريط التنقل المتجاوب للجوال وسطح المكتب (Mobile-First Navbar + Bottom Bar)
 // ============================================================================
 
 import React from 'react';
-import { BuildingLeaderAuth, AdminFeatureFlags } from '../../types/hostel';
+import {
+  BuildingLeaderAuth,
+  MaintenanceAuth,
+  AdminFeatureFlags,
+} from '../../types/hostel';
 import {
   Sliders,
   LogOut,
   AlertCircle,
   Lock,
   LogIn,
+  Wrench,
+  Building2,
+  ClipboardCheck,
+  FileText,
 } from 'lucide-react';
 
+export type AppViewMode =
+  | 'campus'
+  | 'leader_portal'
+  | 'maintenance_portal'
+  | 'building_detail'
+  | 'admin_panel';
+
 interface NavbarProps {
-  activeView: 'campus' | 'leader_portal' | 'building_detail' | 'admin_panel';
+  activeView: AppViewMode;
   isAdmin: boolean;
   auth: BuildingLeaderAuth | null;
+  maintenanceAuth: MaintenanceAuth | null;
   featureFlags: AdminFeatureFlags;
-  onNavigate: (view: 'campus' | 'leader_portal' | 'admin_panel') => void;
+  pendingEvaluationCount?: number;
+  onNavigate: (view: AppViewMode) => void;
   onOpenReportModal: () => void;
-  onOpenLogin?: () => void;
+  onOpenLogin?: (mode?: 'leader' | 'maintenance' | 'admin') => void;
   onExitImpersonation: () => void;
   onLockSession: () => void;
 }
@@ -29,7 +45,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   activeView,
   isAdmin,
   auth,
+  maintenanceAuth,
   featureFlags,
+  pendingEvaluationCount = 0,
   onNavigate,
   onOpenReportModal,
   onOpenLogin,
@@ -37,139 +55,261 @@ export const Navbar: React.FC<NavbarProps> = ({
   onLockSession,
 }) => {
   return (
-    <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-sm print:hidden">
-      {/* 1. Impersonation Banner */}
-      {auth?.isImpersonated && (
-        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center justify-between text-xs text-amber-800">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-amber-600" />
-            <span>
-              أنت الآن بوضع <strong>تقمص دور رائد {auth.buildingId}</strong> ({auth.leaderName})
-            </span>
+    <>
+      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-xs print:hidden">
+        {/* 1. Impersonation Banner */}
+        {auth?.isImpersonated && (
+          <div className="bg-amber-50 border-b border-amber-200 px-4 py-1.5 flex items-center justify-between text-xs text-amber-800">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span className="truncate">
+                تقمص دور <strong>رائد {auth.buildingId}</strong> ({auth.leaderName})
+              </span>
+            </div>
+            <button
+              onClick={onExitImpersonation}
+              className="px-2.5 py-1 bg-amber-600 text-white font-bold rounded-lg hover:bg-amber-700 transition shrink-0"
+            >
+              إنهاء التقمص
+            </button>
           </div>
-          <button
-            onClick={onExitImpersonation}
-            className="px-3 py-1 bg-amber-600 text-white font-bold rounded-lg hover:bg-amber-700 transition"
-          >
-            إنهاء التقمص والعودة للمشرف
-          </button>
-        </div>
-      )}
+        )}
 
-      {/* 2. Main Navbar */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-col sm:flex-row items-center justify-between gap-3">
-        {/* Exact Official Title + Housing Logo */}
-        <div
-          onClick={() => onNavigate('campus')}
-          className="cursor-pointer flex items-center gap-3 text-right"
-        >
-          <img
-            src="./housing-logo.png"
-            alt="شعار إدارة الإسكان الطلابي - جامعة الملك سعود"
-            className="housing-brand-logo-nav"
-            style={{ height: '36px', width: 'auto', maxWidth: '130px', objectFit: 'contain' }}
-          />
-          <div>
-            <h1 className="text-sm sm:text-base font-bold text-slate-900 tracking-tight leading-tight">
-              تقييم ومتابعة مرافق مباني الإسكان الطلابي
-            </h1>
-            <p className="text-[11px] text-slate-500">
-              جامعة الملك سعود • عمادة شؤون الطلاب
-            </p>
-          </div>
-        </div>
-
-        {/* Navigation Tabs */}
-        <nav className="flex items-center gap-1.5 text-xs">
-          <button
+        {/* 2. Main Top Bar */}
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2.5 flex items-center justify-between gap-2">
+          {/* Logo & Title */}
+          <div
             onClick={() => onNavigate('campus')}
-            className={`px-3 py-1.5 rounded-lg font-bold transition ${
-              activeView === 'campus' || activeView === 'building_detail'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-            }`}
+            className="cursor-pointer flex items-center gap-2.5 text-right min-w-0"
           >
-            نظرة عامة ومجسم 3D
-          </button>
+            <img
+              src="./housing-logo.png"
+              alt="شعار إدارة الإسكان الطلابي"
+              className="housing-brand-logo-nav shrink-0"
+              style={{ height: '32px', width: 'auto', maxWidth: '115px', objectFit: 'contain' }}
+            />
+            <div className="min-w-0">
+              <h1 className="text-xs sm:text-base font-bold text-slate-900 tracking-tight truncate">
+                تقييم ومتابعة مرافق الإسكان الطلابي
+              </h1>
+              <p className="text-[10px] text-slate-500 hidden sm:block">
+                جامعة الملك سعود • عمادة شؤون الطلاب
+              </p>
+            </div>
+          </div>
 
-          {(featureFlags.enableLeaderAudits || isAdmin || auth) && (
+          {/* Desktop Navigation Tabs (Hidden on small phones, shown in bottom bar on mobile) */}
+          <nav className="hidden md:flex items-center gap-1.5 text-xs">
+            <button
+              onClick={() => onNavigate('campus')}
+              className={`px-3 py-1.5 rounded-xl font-bold transition flex items-center gap-1.5 ${
+                activeView === 'campus' || activeView === 'building_detail'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              }`}
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              <span>مجمع المباني (34)</span>
+            </button>
+
             <button
               onClick={() => {
                 if (isAdmin || auth) {
                   onNavigate('leader_portal');
                 } else {
-                  onOpenLogin?.();
+                  onOpenLogin?.('leader');
                 }
               }}
-              className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 rounded-xl font-bold transition flex items-center gap-1.5 relative ${
                 activeView === 'leader_portal'
-                  ? 'bg-blue-600 text-white shadow-sm'
+                  ? 'bg-blue-600 text-white shadow-xs'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
               }`}
-              title={!isAdmin && !auth ? 'تسجيل الدخول كـ رائد مبنى مطلوب لتعبئة الفحص الميداني' : ''}
             >
-              {!isAdmin && !auth && <Lock className="w-3.5 h-3.5 text-slate-400" />}
-              <span>استمارة الفحص الميداني</span>
+              <ClipboardCheck className="w-3.5 h-3.5" />
+              <span>فحص رائد المبنى</span>
+              {pendingEvaluationCount > 0 && (
+                <span className="px-1.5 py-0.2 bg-purple-600 text-white text-[10px] rounded-full animate-pulse">
+                  {pendingEvaluationCount}
+                </span>
+              )}
             </button>
-          )}
 
-          {featureFlags.enableOfficialReports && (
             <button
-              onClick={onOpenReportModal}
-              className="px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-bold transition"
-            >
-              التقرير الرسمي
-            </button>
-          )}
-
-          {isAdmin && (
-            <button
-              onClick={() => onNavigate('admin_panel')}
-              className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 ${
-                activeView === 'admin_panel'
-                  ? 'bg-slate-900 text-white shadow-sm'
-                  : 'text-slate-700 hover:bg-slate-100'
+              onClick={() => {
+                if (isAdmin || maintenanceAuth) {
+                  onNavigate('maintenance_portal');
+                } else {
+                  onOpenLogin?.('maintenance');
+                }
+              }}
+              className={`px-3 py-1.5 rounded-xl font-bold transition flex items-center gap-1.5 ${
+                activeView === 'maintenance_portal'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
               }`}
             >
-              <Sliders className="w-3.5 h-3.5" />
-              <span>لوحة المشرف</span>
+              <Wrench className="w-3.5 h-3.5" />
+              <span>بوابة الصيانة وماكسمو</span>
             </button>
-          )}
-        </nav>
 
-        {/* Right Side Session */}
-        <div className="flex items-center gap-2 text-xs">
-          {auth ? (
-            <div className="flex items-center gap-2 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-lg">
-              <span className="text-slate-800 font-bold">{auth.leaderName}</span>
+            {featureFlags.enableOfficialReports && (
+              <button
+                onClick={onOpenReportModal}
+                className="px-3 py-1.5 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-bold transition flex items-center gap-1.5"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>التقرير الرسمي</span>
+              </button>
+            )}
+
+            {isAdmin && (
+              <button
+                onClick={() => onNavigate('admin_panel')}
+                className={`px-3 py-1.5 rounded-xl font-bold transition flex items-center gap-1.5 ${
+                  activeView === 'admin_panel'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'text-slate-700 hover:bg-slate-100'
+                }`}
+              >
+                <Sliders className="w-3.5 h-3.5" />
+                <span>المشرف</span>
+              </button>
+            )}
+          </nav>
+
+          {/* Session / Login Control */}
+          <div className="flex items-center gap-1.5 text-xs shrink-0">
+            {auth ? (
+              <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 px-2.5 py-1.5 rounded-xl">
+                <span className="text-blue-900 font-bold truncate max-w-[110px]">
+                  {auth.leaderName} ({auth.buildingId})
+                </span>
+                <button
+                  onClick={onLockSession}
+                  className="text-slate-500 hover:text-rose-600 p-0.5"
+                  title="تسجيل الخروج"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : maintenanceAuth ? (
+              <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-2.5 py-1.5 rounded-xl">
+                <Wrench className="w-3.5 h-3.5 text-emerald-700" />
+                <span className="text-emerald-900 font-bold truncate max-w-[110px]">
+                  {maintenanceAuth.technicianName}
+                </span>
+                <button
+                  onClick={onLockSession}
+                  className="text-slate-500 hover:text-rose-600 p-0.5"
+                  title="تسجيل الخروج"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : isAdmin ? (
               <button
                 onClick={onLockSession}
-                className="text-slate-500 hover:text-rose-600 mr-1"
-                title="تسجيل الخروج"
+                className="flex items-center gap-1 text-slate-700 hover:text-rose-600 bg-slate-100 border border-slate-200 px-2.5 py-1.5 rounded-xl font-bold transition"
               >
-                <LogOut className="w-3.5 h-3.5" />
+                <Lock className="w-3.5 h-3.5" />
+                <span>خروج المشرف</span>
               </button>
-            </div>
-          ) : isAdmin ? (
-            <button
-              onClick={onLockSession}
-              className="flex items-center gap-1.5 text-slate-600 hover:text-rose-600 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-lg transition"
-              title="قفل لوحة التحكم"
-            >
-              <Lock className="w-3.5 h-3.5" />
-              <span>قفل النظام</span>
-            </button>
-          ) : onOpenLogin ? (
-            <button
-              onClick={onOpenLogin}
-              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg shadow-sm transition"
-            >
-              <LogIn className="w-3.5 h-3.5" />
-              <span>دخول المشرف / الرواد</span>
-            </button>
-          ) : null}
+            ) : (
+              <button
+                onClick={() => onOpenLogin?.('leader')}
+                className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-xl shadow-xs transition"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>تسجيل الدخول</span>
+              </button>
+            )}
+          </div>
         </div>
-      </div>
-    </header>
+      </header>
+
+      {/* 3. Mobile Bottom Navigation Bar (Thumb-Friendly for Phone Users) */}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-2 py-1.5 grid grid-cols-4 gap-1 print:hidden shadow-lg">
+        <button
+          type="button"
+          onClick={() => onNavigate('campus')}
+          className={`flex flex-col items-center justify-center py-1.5 rounded-xl text-[11px] font-bold transition ${
+            activeView === 'campus' || activeView === 'building_detail'
+              ? 'text-blue-600 bg-blue-50/80'
+              : 'text-slate-500'
+          }`}
+        >
+          <Building2 className="w-4 h-4 mb-0.5" />
+          <span>المباني</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (isAdmin || auth) {
+              onNavigate('leader_portal');
+            } else {
+              onOpenLogin?.('leader');
+            }
+          }}
+          className={`relative flex flex-col items-center justify-center py-1.5 rounded-xl text-[11px] font-bold transition ${
+            activeView === 'leader_portal'
+              ? 'text-blue-600 bg-blue-50/80'
+              : 'text-slate-500'
+          }`}
+        >
+          <ClipboardCheck className="w-4 h-4 mb-0.5" />
+          <span>رائد المبنى</span>
+          {pendingEvaluationCount > 0 && (
+            <span className="absolute top-1 left-4 w-4 h-4 rounded-full bg-purple-600 text-white text-[9px] flex items-center justify-center">
+              {pendingEvaluationCount}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (isAdmin || maintenanceAuth) {
+              onNavigate('maintenance_portal');
+            } else {
+              onOpenLogin?.('maintenance');
+            }
+          }}
+          className={`flex flex-col items-center justify-center py-1.5 rounded-xl text-[11px] font-bold transition ${
+            activeView === 'maintenance_portal'
+              ? 'text-emerald-700 bg-emerald-50/80'
+              : 'text-slate-500'
+          }`}
+        >
+          <Wrench className="w-4 h-4 mb-0.5" />
+          <span>الصيانة وماكسمو</span>
+        </button>
+
+        {isAdmin ? (
+          <button
+            type="button"
+            onClick={() => onNavigate('admin_panel')}
+            className={`flex flex-col items-center justify-center py-1.5 rounded-xl text-[11px] font-bold transition ${
+              activeView === 'admin_panel'
+                ? 'text-slate-900 bg-slate-100'
+                : 'text-slate-500'
+            }`}
+          >
+            <Sliders className="w-4 h-4 mb-0.5" />
+            <span>المشرف</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onOpenReportModal}
+            className="flex flex-col items-center justify-center py-1.5 rounded-xl text-[11px] font-bold text-slate-500"
+          >
+            <FileText className="w-4 h-4 mb-0.5" />
+            <span>التقرير</span>
+          </button>
+        )}
+      </nav>
+    </>
   );
 };
