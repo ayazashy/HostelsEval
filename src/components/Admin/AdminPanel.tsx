@@ -1,5 +1,5 @@
 // ============================================================================
-// 🎛️ لوحة تحكم المشرف العام (Light Mode)
+// لوحة تحكم المشرف العام (Light Mode)
 // تقييم ومتابعة مرافق مباني الإسكان الطلابي
 // ============================================================================
 
@@ -70,6 +70,9 @@ import {
   Building2,
   Map,
   HardDriveDownload,
+  Lock,
+  Globe,
+  Circle,
 } from 'lucide-react';
 import { BuildingStructureEditor } from './BuildingStructureEditor';
 import { CampusMapEditor } from './CampusMapEditor';
@@ -201,7 +204,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     try {
       const res = await initializeCloudSecretDocument();
       if (res.success) {
-        setSecretDocInitStatus(`تمت تهيئة وتأكيد المستند السحابي ${FIRESTORE_SECRET_COLLECTION}/${FIRESTORE_SECRET_DOC} بنجاح ✓`);
+        setSecretDocInitStatus(`تمت تهيئة وتأكيد المستند السحابي ${FIRESTORE_SECRET_COLLECTION}/${FIRESTORE_SECRET_DOC} بنجاح`);
       } else {
         setSecretDocInitStatus(`تعذر التهيئة (${res.code || 'خطأ'}): ${res.error}`);
       }
@@ -556,13 +559,23 @@ service cloud.firestore {
             </div>
             <button
               onClick={() => toggleFeature('enable3DTwin')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition inline-flex items-center gap-1.5 ${
                 featureFlags.enable3DTwin
                   ? 'bg-emerald-50 text-emerald-800 border border-emerald-300'
                   : 'bg-slate-100 text-slate-500'
               }`}
             >
-              {featureFlags.enable3DTwin ? 'مفعّل 🟢' : 'معطّل ⚪'}
+              {featureFlags.enable3DTwin ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>مفعّل</span>
+                </>
+              ) : (
+                <>
+                  <Circle className="w-3.5 h-3.5 text-slate-400" />
+                  <span>معطّل</span>
+                </>
+              )}
             </button>
           </div>
 
@@ -578,13 +591,23 @@ service cloud.firestore {
             </div>
             <button
               onClick={() => toggleFeature('enableLeaderAudits')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition inline-flex items-center gap-1.5 ${
                 featureFlags.enableLeaderAudits
                   ? 'bg-emerald-50 text-emerald-800 border border-emerald-300'
                   : 'bg-slate-100 text-slate-500'
               }`}
             >
-              {featureFlags.enableLeaderAudits ? 'مفعّل 🟢' : 'معطّل ⚪'}
+              {featureFlags.enableLeaderAudits ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>مفعّل</span>
+                </>
+              ) : (
+                <>
+                  <Circle className="w-3.5 h-3.5 text-slate-400" />
+                  <span>معطّل</span>
+                </>
+              )}
             </button>
           </div>
 
@@ -600,13 +623,23 @@ service cloud.firestore {
             </div>
             <button
               onClick={() => toggleFeature('enablePhotoCapture')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition inline-flex items-center gap-1.5 ${
                 featureFlags.enablePhotoCapture
                   ? 'bg-emerald-50 text-emerald-800 border border-emerald-300'
                   : 'bg-slate-100 text-slate-500'
               }`}
             >
-              {featureFlags.enablePhotoCapture ? 'مفعّل 🟢' : 'معطّل ⚪'}
+              {featureFlags.enablePhotoCapture ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>مفعّل</span>
+                </>
+              ) : (
+                <>
+                  <Circle className="w-3.5 h-3.5 text-slate-400" />
+                  <span>معطّل</span>
+                </>
+              )}
             </button>
           </div>
 
@@ -622,13 +655,23 @@ service cloud.firestore {
             </div>
             <button
               onClick={() => toggleFeature('enableOfficialReports')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition inline-flex items-center gap-1.5 ${
                 featureFlags.enableOfficialReports
                   ? 'bg-emerald-50 text-emerald-800 border border-emerald-300'
                   : 'bg-slate-100 text-slate-500'
               }`}
             >
-              {featureFlags.enableOfficialReports ? 'مفعّل 🟢' : 'معطّل ⚪'}
+              {featureFlags.enableOfficialReports ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>مفعّل</span>
+                </>
+              ) : (
+                <>
+                  <Circle className="w-3.5 h-3.5 text-slate-400" />
+                  <span>معطّل</span>
+                </>
+              )}
             </button>
           </div>
 
@@ -646,13 +689,23 @@ service cloud.firestore {
             </div>
             <button
               onClick={() => toggleFeature('enablePublicView')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition inline-flex items-center gap-1.5 ${
                 featureFlags.enablePublicView
                   ? 'bg-emerald-50 text-emerald-800 border border-emerald-300'
                   : 'bg-slate-100 text-slate-600 border border-slate-300'
               }`}
             >
-              {featureFlags.enablePublicView ? 'مفتوح 🌐' : 'مغلق ومحمي 🔒'}
+              {featureFlags.enablePublicView ? (
+                <>
+                  <Globe className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>مفتوح</span>
+                </>
+              ) : (
+                <>
+                  <Lock className="w-3.5 h-3.5 text-slate-500" />
+                  <span>مغلق ومحمي</span>
+                </>
+              )}
             </button>
           </div>
         </div>
@@ -1272,16 +1325,17 @@ service cloud.firestore {
                   {cloudTestResult?.canWrite ? (
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
                       <CheckCircle2 className="w-3.5 h-3.5" />
-                      متصل ومصرّح بالكتابة 🟢
+                      <span>متصل ومصرّح بالكتابة</span>
                     </span>
                   ) : cloudTestResult?.canRead ? (
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
                       <AlertTriangle className="w-3.5 h-3.5" />
-                      قراءة فقط (بحاجة لتفعيل القواعد) 🟡
+                      <span>قراءة فقط (بحاجة لتفعيل القواعد)</span>
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-200 text-slate-700">
-                      لم يتم الفحص بعد ⚪
+                      <Circle className="w-3.5 h-3.5 text-slate-500" />
+                      <span>لم يتم الفحص بعد</span>
                     </span>
                   )}
                 </div>
@@ -1393,7 +1447,7 @@ service cloud.firestore {
                 <div>
                   {handshakeStatus.success ? (
                     <p className="font-bold">
-                      تم توثيق الاتصال السري بنجاح في Firebase بالمجموعة ({handshakeStatus.collection}) ✓
+                      تم توثيق الاتصال السري بنجاح في Firebase بالمجموعة ({handshakeStatus.collection})
                     </p>
                   ) : (
                     <p>

@@ -1,5 +1,5 @@
 // ============================================================================
-// 📊 HostelsEval — Health Score & Defect Analytics Engine
+// HostelsEval — Health Score & Defect Analytics Engine
 // Calculates real-time 0-100 health metrics and dynamic heatmap color mappings
 // ============================================================================
 
@@ -55,6 +55,14 @@ export function getScoreColor(score: number | null | undefined): ScoreColorDefin
   };
 }
 
+export function isLeakDefectId(defectId: string): boolean {
+  return defectId === 'leak' || defectId.endsWith('_leak');
+}
+
+export function evaluationHasLeak(item: FixtureEvaluation): boolean {
+  return Array.isArray(item.defects) && item.defects.some(isLeakDefectId);
+}
+
 // Calculate Wing Health Score based on its recorded evaluations (returns null if uninspected)
 export function calculateWingHealth(evaluations: FixtureEvaluation[]): number | null {
   if (!evaluations || evaluations.length === 0) return null;
@@ -68,9 +76,11 @@ export function calculateWingHealth(evaluations: FixtureEvaluation[]): number | 
       totalDeduction += 12;
     }
 
-    // Heavy penalty for active water leaks and bad odors
-    if (item.defects.includes('leak')) totalDeduction += 10;
-    if (item.defects.includes('bad_odor')) totalDeduction += 8;
+    // Extra penalty for active water leaks and bad odors (supports V1 & V3 tags)
+    if (evaluationHasLeak(item)) totalDeduction += 10;
+    if (item.defects?.some((d) => d === 'bad_odor' || d === 'cln_bad_odor')) {
+      totalDeduction += 8;
+    }
   });
 
   const rawScore = 100 - totalDeduction / Math.max(1, evaluations.length * 0.35);
@@ -88,14 +98,21 @@ export function computeCampusStats(
   );
   const auditedBuildingsSet = new Set(validEvals.map((e) => e.buildingId.toUpperCase()));
 
+  let operationalCount = 0;
+  let needsMaintenanceCount = 0;
+  let brokenOutagesCount = 0;
   let leaksCount = 0;
   let criticalToilets = 0;
   let brokenShowers = 0;
 
   validEvals.forEach((item) => {
-    if (item.defects.includes('leak')) leaksCount += 1;
-    if (item.fixtureTypeCode === 'TOI' && item.status === 'broken') criticalToilets += 1;
-    if (item.fixtureTypeCode === 'SHW' && item.status === 'broken') brokenShowers += 1;
+    if (item.status === 'operational') operationalCount += 1;
+    else if (item.status === 'needs_maintenance') needsMaintenanceCount += 1;
+    else if (item.status === 'broken') brokenOutagesCount += 1;
+
+    if (item.status !== 'operational' && evaluationHasLeak(item)) leaksCount += 1;
+    if (item.fixtureTypeCode === 'TOI' && item.status !== 'operational') criticalToilets += 1;
+    if (item.fixtureTypeCode === 'SHW' && item.status !== 'operational') brokenShowers += 1;
   });
 
   const inspectedBuildings = buildings.filter(
@@ -116,6 +133,10 @@ export function computeCampusStats(
     auditedBuildings: auditedBuildingsSet.size,
     uninspectedBuildings: uninspectedCount,
     totalFixturesCount: validEvals.length,
+    totalOperationalCount: operationalCount,
+    totalActiveIssuesCount: needsMaintenanceCount + brokenOutagesCount,
+    totalNeedsMaintenance: needsMaintenanceCount,
+    totalBrokenOutages: brokenOutagesCount,
     totalLeaksCount: leaksCount,
     totalCriticalToilets: criticalToilets,
     totalBrokenShowers: brokenShowers,
@@ -139,9 +160,17 @@ export function summarizeWing(
     operationalCount: evaluations.filter((e) => e.status === 'operational').length,
     warningCount: evaluations.filter((e) => e.status === 'needs_maintenance').length,
     criticalCount: evaluations.filter((e) => e.status === 'broken').length,
-    activeLeaks: evaluations.filter((e) => e.defects.includes('leak')).length,
-    brokenToilets: evaluations.filter((e) => e.fixtureTypeCode === 'TOI' && e.status === 'broken').length,
-    brokenShowers: evaluations.filter((e) => e.fixtureTypeCode === 'SHW' && e.status === 'broken').length,
-    coldHeaters: evaluations.filter((e) => e.defects.includes('cold_heater')).length,
+    activeLeaks: evaluations.filter(
+      (e) => e.status !== 'operational' && evaluationHasLeak(e)
+    ).length,
+    brokenToilets: evaluations.filter(
+      (e) => e.fixtureTypeCode === 'TOI' && e.status !== 'operational'
+    ).length,
+    brokenShowers: evaluations.filter(
+      (e) => e.fixtureTypeCode === 'SHW' && e.status !== 'operational'
+    ).length,
+    coldHeaters: evaluations.filter((e) =>
+      e.defects?.some((d) => d === 'cold_heater' || d === 'plm_no_hot_water')
+    ).length,
   };
 }

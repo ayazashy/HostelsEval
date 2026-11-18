@@ -1,5 +1,5 @@
 // ============================================================================
-// 📱 بوابة رائد المبنى والفحص الميداني السريع (Mobile-First Leader Portal)
+// بوابة رائد المبنى والفحص الميداني السريع (Mobile-First Leader Portal)
 // تدعم: بوابة التقييم الإلزامي بعد إغلاق الصيانة، الإضافة السريعة للمرافق، والسجل الزمني
 // ============================================================================
 
@@ -325,8 +325,9 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
                 {currentBuilding.nameAr}
               </span>
               {cloudStatus?.synced && (
-                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                  متصل سحابياً 🟢
+                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 inline-flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  <span>متصل سحابياً</span>
                 </span>
               )}
             </div>

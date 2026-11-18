@@ -1,5 +1,5 @@
 // ============================================================================
-// ⭐ بوابة التقييم الإلزامي لرواد المباني بعد إغلاق البلاغ (منع الإغلاق الصوري)
+// بوابة التقييم الإلزامي لرواد المباني بعد إغلاق البلاغ (منع الإغلاق الصوري)
 // تلزم رائد المبنى بتقييم البلاغات المغلقة من الصيانة قبل فتح أي بلاغ جديد
 // ============================================================================
 
@@ -298,7 +298,7 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
                 <CheckCircle2
                   className={`w-6 h-6 ${isFixed === true ? 'text-emerald-600' : 'text-slate-400'}`}
                 />
-                <span>نعم، تم الإصلاح بنجاح ✅</span>
+                <span>نعم، تم الإصلاح بنجاح</span>
                 <span className="text-[10px] font-normal text-slate-500">
                   اعتماد إغلاق البلاغ وتحويل المرفق لسليم
                 </span>
@@ -319,7 +319,7 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
                 <XCircle
                   className={`w-6 h-6 ${isFixed === false ? 'text-rose-600' : 'text-slate-400'}`}
                 />
-                <span>لا، إغلاق صوري ❌</span>
+                <span>لا، إغلاق صوري</span>
                 <span className="text-[10px] font-normal text-slate-500">
                   إعادة فتح البلاغ فوراً لفريق الصيانة
                 </span>
@@ -453,7 +453,7 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
                   className="mt-0.5 rounded border-slate-400"
                 />
                 <span className="text-xs font-bold text-slate-900 leading-snug">
-                  أؤكد أنه تم رفع تقييم الخدمة عبر رابط نماذج الجامعة أعلاه وإدخال رقم البلاغ وبحالة (مكتمل) ✅
+                  أؤكد أنه تم رفع تقييم الخدمة عبر رابط نماذج الجامعة أعلاه وإدخال رقم البلاغ وبحالة (مكتمل)
                 </span>
               </label>
             </div>

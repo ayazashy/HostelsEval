@@ -1,5 +1,5 @@
 // ============================================================================
-// 🏢 تقييم ومتابعة مرافق مباني الإسكان الطلابي — التطبيق الرئيسي (Light Mode)
+// تقييم ومتابعة مرافق مباني الإسكان الطلابي — التطبيق الرئيسي (Light Mode)
 // ============================================================================
 
 import React, { useState, useEffect } from 'react';
@@ -33,7 +33,7 @@ import {
   fetchAllEvaluations,
   subscribeToBuildingEvaluations,
 } from './services/firestoreService';
-import { calculateWingHealth } from './utils/healthScore';
+import { calculateWingHealth, evaluationHasLeak } from './utils/healthScore';
 
 function isViewAuthorized(
   view: AppViewMode,
@@ -212,7 +212,7 @@ export function App() {
       prev.map((b) => {
         const bEvals = evals.filter((e) => e?.buildingId === b.id && !e.isDeleted);
         const health = calculateWingHealth(bEvals);
-        const leaks = bEvals.filter((e) => e.defects && e.defects.includes('leak')).length;
+        const leaks = bEvals.filter((e) => e.status !== 'operational' && evaluationHasLeak(e)).length;
         const criticals = bEvals.filter((e) => e.status === 'broken').length;
         const warnings = bEvals.filter((e) => e.status === 'needs_maintenance').length;
 
@@ -232,7 +232,7 @@ export function App() {
             criticalIssues: criticals,
             warningIssues: warnings,
             waterLeaks: leaks,
-            activeDefectsCount: leaks + criticals + warnings,
+            activeDefectsCount: criticals + warnings,
           },
         };
       })

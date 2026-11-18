@@ -1,5 +1,5 @@
 // ============================================================================
-// 🏙️ المجسم ثلاثي الأبعاد لجميع مباني الإسكان (34 مبنى) — Campus 3D Viewer
+// المجسم ثلاثي الأبعاد لجميع مباني الإسكان (34 مبنى) — Campus 3D Viewer
 // Clean Light Mode Architectural Campus Visualization for 34 Hostel Buildings
 // ============================================================================
 
@@ -13,9 +13,9 @@ import {
   Eye,
   ZoomIn,
   ZoomOut,
-  Droplets,
-  Layers,
-  Building,
+  Wrench,
+  AlertOctagon,
+  CheckCircle2,
   RefreshCw,
 } from 'lucide-react';
 
@@ -105,8 +105,9 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
   const [hoveredBuilding, setHoveredBuilding] = useState<{
     building: BuildingInfo;
     health: number | null | undefined;
-    leaks: number;
+    needsMaintenance: number;
     broken: number;
+    evaluatedCount: number;
     x: number;
     y: number;
   } | null>(null);
@@ -298,11 +299,14 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
       const posX = customPos?.x !== undefined ? customPos.x : defaultX;
       const posZ = customPos?.z !== undefined ? customPos.z : defaultZ;
 
-      const bEvals = allEvaluations.filter((e) => e.buildingId === building.id);
+      const bEvals = allEvaluations.filter(
+        (e) => !e.isDeleted && e.buildingId === building.id
+      );
       const health = building.healthScore;
       const colorDef = getScoreColor(health);
-      const leaksCount = bEvals.filter((e) => e.defects.includes('leak')).length;
+      const needsMaintCount = bEvals.filter((e) => e.status === 'needs_maintenance').length;
       const brokenCount = bEvals.filter((e) => e.status === 'broken').length;
+      const activeIssuesCount = needsMaintCount + brokenCount;
 
       const buildingGroup = new THREE.Group();
       buildingGroup.position.set(posX, 0, posZ);
@@ -374,8 +378,8 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
         buildingGroup.add(wingMesh);
       }
 
-      // If active leaks exist, add a pulsing red/amber ring at the top
-      if (leaksCount > 0) {
+      // If active broken outages exist, add a highlight ring at the top
+      if (brokenCount > 0) {
         const beaconGeo = new THREE.RingGeometry(1.6, 2.1, 24);
         const beaconMat = new THREE.MeshBasicMaterial({
           color: 0xdc2626,
@@ -388,7 +392,7 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
         buildingGroup.add(beaconMesh);
       }
 
-      // Floating 3D Building Number & Health Badge Sprite
+      // Floating 3D Building Number & Health Badge Sprite (Zero Emojis)
       const spriteCanvas = document.createElement('canvas');
       spriteCanvas.width = 256;
       spriteCanvas.height = 256;
@@ -420,18 +424,18 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
         sCtx.fillStyle = '#0f172a';
         sCtx.textAlign = 'center';
         sCtx.textBaseline = 'middle';
-        const numY = leaksCount > 0 || health !== null ? centerY - 14 : centerY;
+        const numY = activeIssuesCount > 0 || (health !== null && health !== undefined) ? centerY - 14 : centerY;
         sCtx.fillText(String(building.number), centerX, numY);
 
-        // Subtitle indicator (Leaks or Health)
-        if (leaksCount > 0) {
+        // Subtitle indicator (Numeric Health % or Active Issue Count Badge - Zero Emojis)
+        if (activeIssuesCount > 0) {
           sCtx.beginPath();
-          sCtx.arc(centerX, centerY + 62, 22, 0, Math.PI * 2);
-          sCtx.fillStyle = '#dc2626';
+          sCtx.roundRect(centerX - 36, centerY + 44, 72, 36, 18);
+          sCtx.fillStyle = brokenCount > 0 ? '#dc2626' : '#d97706';
           sCtx.fill();
-          sCtx.font = 'bold 22px "Cairo", sans-serif';
+          sCtx.font = 'bold 24px "Cairo", sans-serif';
           sCtx.fillStyle = '#ffffff';
-          sCtx.fillText('💧', centerX, centerY + 64);
+          sCtx.fillText(`! ${activeIssuesCount}`, centerX, centerY + 63);
         } else if (health !== null && health !== undefined) {
           sCtx.font = 'bold 26px "Cairo", sans-serif';
           sCtx.fillStyle = colorDef.hex;
@@ -452,8 +456,9 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
         buildingId: building.id,
         building,
         health,
-        leaksCount,
+        needsMaintCount,
         brokenCount,
+        evaluatedCount: bEvals.length,
       };
 
       scene.add(buildingGroup);
@@ -518,8 +523,9 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
         setHoveredBuilding({
           building: data.building,
           health: data.health,
-          leaks: data.leaksCount,
-          broken: data.brokenCount,
+          needsMaintenance: data.needsMaintCount || 0,
+          broken: data.brokenCount || 0,
+          evaluatedCount: data.evaluatedCount || 0,
           x: e.clientX - rect.left,
           y: e.clientY - rect.top,
         });
@@ -768,7 +774,7 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
       if (filterMode === 'critical') {
         isMatch = data.health !== null && data.health !== undefined && data.health < 50;
       } else if (filterMode === 'leaks') {
-        isMatch = data.leaksCount > 0;
+        isMatch = (data.needsMaintCount || 0) + (data.brokenCount || 0) > 0;
       } else if (filterMode === 'healthy') {
         isMatch = data.health !== null && data.health !== undefined && data.health >= 80;
       } else if (filterMode === 'uninspected') {
@@ -828,7 +834,7 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
             onChange={(e) => handleJumpToBuilding(e.target.value)}
             className="bg-white/95 backdrop-blur-md border border-slate-200 text-slate-800 text-xs rounded-xl px-3 py-1.5 font-bold shadow-sm cursor-pointer hover:border-blue-400 focus:outline-none"
           >
-            <option value="">🎯 تركيز الكاميرا على مبنى...</option>
+            <option value="">تركيز الكاميرا على مبنى محدد...</option>
             {buildings.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.nameAr} ({b.id})
@@ -919,18 +925,28 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
               </span>
             </div>
 
-            {hoveredBuilding.leaks > 0 && (
-              <div className="text-xs text-rose-600 font-bold flex items-center gap-1 mt-1 bg-rose-50 px-2 py-1 rounded-lg border border-rose-100">
-                <Droplets className="w-3.5 h-3.5" />
-                <span>{hoveredBuilding.leaks} تسريب مياه نشط!</span>
+            {hoveredBuilding.broken > 0 && (
+              <div className="text-xs text-rose-700 font-bold flex items-center gap-1.5 mt-1 bg-rose-50 px-2 py-1 rounded-lg border border-rose-100">
+                <AlertOctagon className="w-3.5 h-3.5 shrink-0" />
+                <span>{hoveredBuilding.broken} مرافق عاطلة</span>
               </div>
             )}
 
-            {hoveredBuilding.broken > 0 && (
-              <div className="text-xs text-amber-700 font-bold mt-1 bg-amber-50 px-2 py-1 rounded-lg border border-amber-100">
-                ⚠️ {hoveredBuilding.broken} مرافق معطلة
+            {hoveredBuilding.needsMaintenance > 0 && (
+              <div className="text-xs text-amber-800 font-bold flex items-center gap-1.5 mt-1 bg-amber-50 px-2 py-1 rounded-lg border border-amber-100">
+                <Wrench className="w-3.5 h-3.5 shrink-0" />
+                <span>{hoveredBuilding.needsMaintenance} يحتاج صيانة/نظافة</span>
               </div>
             )}
+
+            {hoveredBuilding.evaluatedCount > 0 &&
+              hoveredBuilding.broken === 0 &&
+              hoveredBuilding.needsMaintenance === 0 && (
+                <div className="text-xs text-emerald-700 font-bold flex items-center gap-1.5 mt-1 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200">
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  <span>جميع المرافق المفحوصة سليمة</span>
+                </div>
+              )}
 
             <div className="mt-2.5 pt-2 border-t border-slate-100 text-[11px] text-blue-600 font-bold flex items-center justify-center gap-1">
               <span>انقر لمعاينة أجنحة المبنى الـ 4 ←</span>

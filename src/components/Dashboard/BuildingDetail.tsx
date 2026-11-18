@@ -1,5 +1,5 @@
 // ============================================================================
-// 🏢 تفاصيل المبنى والمجسم ثلاثي الأبعاد (Light Mode)
+// تفاصيل المبنى والمجسم ثلاثي الأبعاد (Light Mode)
 // تقييم ومتابعة مرافق مباني الإسكان الطلابي
 // ============================================================================
 
@@ -18,8 +18,10 @@ import {
   Camera,
   Layers,
   Lock,
-  Clock,
   Maximize2,
+  CheckCircle2,
+  AlertTriangle,
+  Wrench,
 } from 'lucide-react';
 
 interface BuildingDetailProps {
@@ -198,24 +200,33 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
                   </div>
                 </div>
 
-                {/* Fixture Stats */}
+                {/* Comprehensive Wing Stats (Zero Emojis) */}
                 <div className="space-y-1.5 text-xs pt-2 border-t border-slate-100 text-slate-700">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">💧 تسريب مياه:</span>
-                    <span className={`font-bold ${wing.activeLeaks > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
-                      {wing.activeLeaks}
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span>مرافق سليمة:</span>
+                    </span>
+                    <span className={`font-bold font-mono ${wing.operationalCount > 0 ? 'text-emerald-700' : 'text-slate-400'}`}>
+                      {wing.operationalCount}
                     </span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">🚽 مراحيض عاطلة:</span>
-                    <span className={`font-bold ${wing.brokenToilets > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
-                      {wing.brokenToilets}
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500 flex items-center gap-1.5">
+                      <Wrench className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span>يحتاج صيانة:</span>
+                    </span>
+                    <span className={`font-bold font-mono ${wing.warningCount > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                      {wing.warningCount}
                     </span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">🚿 مراوش متضررة:</span>
-                    <span className={`font-bold ${wing.brokenShowers > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
-                      {wing.brokenShowers}
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500 flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                      <span>مرافق عاطلة:</span>
+                    </span>
+                    <span className={`font-bold font-mono ${wing.criticalCount > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
+                      {wing.criticalCount}
                     </span>
                   </div>
                 </div>

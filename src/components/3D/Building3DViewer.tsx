@@ -1,5 +1,5 @@
 // ============================================================================
-// 🏙️ المجسم ثلاثي الأبعاد للأجنحة الأربعة (Light Mode)
+// المجسم ثلاثي الأبعاد للأجنحة الأربعة (Light Mode)
 // 4-Wing Central Hub Architecture with Clean Light Architectural Rendering
 // ============================================================================
 
@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { FixtureEvaluation } from '../../types/hostel';
 import { calculateWingHealth, getScoreColor } from '../../utils/healthScore';
 import { getBuildingStructure } from '../../utils/buildingStructureStore';
-import { RotateCw, Eye, Layers } from 'lucide-react';
+import { RotateCw, Eye, Layers, AlertTriangle, Wrench } from 'lucide-react';
 
 interface Building3DViewerProps {
   buildingId: string;
@@ -35,7 +35,8 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
     wingId: number;
     floor: number;
     health: number | null;
-    leaks: number;
+    issues: number;
+    broken: number;
     x: number;
     y: number;
   } | null>(null);
@@ -194,7 +195,8 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
           wingId: w,
           floor: f,
           health,
-          leaksCount: sectorEvals.filter((e) => e.defects.includes('leak')).length,
+          issuesCount: sectorEvals.filter((e) => e.status !== 'operational').length,
+          brokenCount: sectorEvals.filter((e) => e.status === 'broken').length,
         };
 
         scene.add(mesh);
@@ -297,7 +299,8 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
             wingId: data.wingId,
             floor: data.floor,
             health: data.health,
-            leaks: data.leaksCount,
+            issues: data.issuesCount || 0,
+            broken: data.brokenCount || 0,
             x: e.clientX - rect.left,
             y: e.clientY - rect.top,
           });
@@ -555,9 +558,16 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
                 {hoveredInfo.health !== null ? `%${hoveredInfo.health}` : 'غير مفحوص'}
               </span>
             </div>
-            {hoveredInfo.leaks > 0 && (
-              <div className="text-xs text-rose-600 font-bold mt-1">
-                💧 {hoveredInfo.leaks} تسريب مياه نشط!
+            {hoveredInfo.issues > 0 && (
+              <div className="text-xs text-rose-600 font-bold mt-1 flex items-center gap-1.5">
+                {hoveredInfo.broken > 0 ? (
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                ) : (
+                  <Wrench className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                )}
+                <span>
+                  {hoveredInfo.issues} بلاغ نشط ({hoveredInfo.broken} عاطل)
+                </span>
               </div>
             )}
           </div>

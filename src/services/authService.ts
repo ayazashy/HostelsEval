@@ -1,5 +1,5 @@
 // ============================================================================
-// 🔐 HostelsEval — Cryptographic Gatekeeper, Leader Credentials & In-Memory Vault
+// HostelsEval — Cryptographic Gatekeeper, Leader Credentials & In-Memory Vault
 // Zero hardcoded passwords • In-Memory Session Unlocking • Distinct Leader Codes
 // Protected by AES-256-GCM + PBKDF2 (100,000 iterations) Master Password
 // ============================================================================

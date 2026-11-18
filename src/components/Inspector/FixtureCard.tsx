@@ -1,5 +1,5 @@
 // ============================================================================
-// 🛠️ بطاقة المرفق الذكية المتوافقة مع الجوال (Mobile-First Facility Card V3)
+// بطاقة المرفق الذكية المتوافقة مع الجوال (Mobile-First Facility Card V3)
 // تدعم: الاختيارات المسبقة الدقيقة لكل مرفق، الوسائط المتعددة، ومحادثة تحديثات المرفق المستمرة
 // ============================================================================
 
@@ -46,6 +46,7 @@ import {
   Send,
   ExternalLink,
   Copy,
+  RotateCcw,
   X,
 } from 'lucide-react';
 
@@ -250,7 +251,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
       setIsSaving(false);
       setSaveFeedback({
         status: res.cloudSynced ? 'cloud_success' : 'local_only',
-        message: res.cloudSynced ? 'سليم ✓' : 'حُفظ محلياً ✓',
+        message: res.cloudSynced ? 'سليم' : 'حُفظ محلياً',
       });
     } catch {
       setIsSaving(false);
@@ -350,12 +351,12 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
       if (res && res.cloudSynced) {
         setSaveFeedback({
           status: 'cloud_success',
-          message: 'تم فتح/تحديث البلاغ سحابياً ☁️ ✓',
+          message: 'تم فتح/تحديث البلاغ سحابياً',
         });
       } else if (res && res.success) {
         setSaveFeedback({
           status: 'local_only',
-          message: 'حُفظ محلياً ✓',
+          message: 'حُفظ محلياً',
         });
       } else {
         setSaveFeedback({
@@ -449,7 +450,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
       await evaluateClosedTicket(existingEvaluation, {
         isFixed: true,
         rating: 5,
-        feedback: 'تمت معاينة المرفق واعتماد الإصلاح من داخل محادثة المرفق ✅',
+        feedback: 'تمت معاينة المرفق واعتماد الإصلاح من داخل محادثة المرفق',
         leaderName: inspectorName,
         ksuEvaluationConfirmed: true,
       });
@@ -559,18 +560,21 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                 </a>
               )}
               {ticket?.status === 'verified_closed' && ticket?.ksuEvaluationConfirmed && (
-                <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-300">
-                  تم تقييم الخدمة (مكتمل) ✓
+                <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-300 inline-flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" />
+                  <span>تم تقييم الخدمة (مكتمل)</span>
                 </span>
               )}
               {ticket?.status === 'pending_evaluation' && (
-                <span className="text-[10px] font-bold bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full border border-purple-300 animate-pulse">
-                  بانتظار معاينتك واعتمادك ⭐
+                <span className="text-[10px] font-bold bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full border border-purple-300 inline-flex items-center gap-1">
+                  <Star className="w-3 h-3" />
+                  <span>بانتظار معاينتك واعتمادك</span>
                 </span>
               )}
               {ticket?.status === 'reopened' && (
-                <span className="text-[10px] font-bold bg-rose-100 text-rose-800 px-2 py-0.5 rounded-full border border-rose-300">
-                  معاد فتحه 🔄
+                <span className="text-[10px] font-bold bg-rose-100 text-rose-800 px-2 py-0.5 rounded-full border border-rose-300 inline-flex items-center gap-1">
+                  <RotateCcw className="w-3 h-3" />
+                  <span>معاد فتحه</span>
                 </span>
               )}
             </div>
@@ -948,10 +952,10 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                         : ticket.status === 'in_progress'
                         ? 'قيد المعالجة والتنفيذ'
                         : ticket.status === 'pending_evaluation'
-                        ? 'تم الإصلاح - بانتظار معاينتك واعتمادك ⭐'
+                        ? 'تم الإصلاح - بانتظار معاينتك واعتمادك'
                         : ticket.status === 'reopened'
-                        ? 'مرفوض ومعاد فتحه 🔄'
-                        : 'مغلق ومعتمد نهائياً ✅'}
+                        ? 'مرفوض ومعاد فتحه'
+                        : 'مغلق ومعتمد نهائياً'}
                     </span>
                   </div>
 
@@ -1061,7 +1065,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                   {ticket.status === 'verified_closed' && ticket.ksuEvaluationConfirmed && (
                     <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 text-[11px] font-bold text-emerald-800 flex items-center gap-1.5">
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span>تم تأكيد رفع تقييم الخدمة في نماذج الجامعة (مكتمل) ✓</span>
+                      <span>تم تأكيد رفع تقييم الخدمة في نماذج الجامعة (مكتمل)</span>
                     </div>
                   )}
 
@@ -1091,7 +1095,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                             className="mt-0.5 rounded border-slate-400"
                           />
                           <span className="text-[11px] font-bold text-slate-900 leading-snug">
-                            أؤكد أنه تم رفع تقييم الخدمة بالرابط برقم البلاغ وبحالة (مكتمل) ✅
+                            أؤكد أنه تم رفع تقييم الخدمة بالرابط برقم البلاغ وبحالة (مكتمل)
                           </span>
                         </label>
                       </div>
@@ -1104,7 +1108,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                           className="py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold flex items-center justify-center gap-1.5 shadow-xs"
                         >
                           <CheckCircle2 className="w-4 h-4" />
-                          <span>اعتماد الإصلاح ✅</span>
+                          <span>اعتماد الإصلاح</span>
                         </button>
                         <button
                           type="button"
@@ -1113,7 +1117,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                           className="py-2 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold flex items-center justify-center gap-1.5 shadow-xs"
                         >
                           <XCircle className="w-4 h-4" />
-                          <span>رفض وإعادة فتح ❌</span>
+                          <span>رفض وإعادة فتح</span>
                         </button>
                       </div>
 
@@ -1162,37 +1166,37 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                       switch (ev.action) {
                         case 'maximo_registered':
                           return {
-                            text: 'تسجيل رقم ومرفق ماكسمو 🛠️',
+                            text: 'تسجيل رقم ومرفق ماكسمو',
                             cls: 'bg-blue-100 text-blue-800',
                           };
                         case 'maintenance_closed':
                           return {
-                            text: 'إتمام المعالجة وإرفاق صورة الإصلاح 🔧',
+                            text: 'إتمام المعالجة وإرفاق صورة الإصلاح',
                             cls: 'bg-purple-100 text-purple-800',
                           };
                         case 'leader_verified':
                           return {
-                            text: 'اعتماد الإصلاح من رائد المبنى ✅',
+                            text: 'اعتماد الإصلاح من رائد المبنى',
                             cls: 'bg-emerald-100 text-emerald-800',
                           };
                         case 'leader_rejected_reopened':
                           return {
-                            text: 'رفض الإصلاح وإعادة فتح البلاغ ❌',
+                            text: 'رفض الإصلاح وإعادة فتح البلاغ',
                             cls: 'bg-rose-100 text-rose-800',
                           };
                         case 'chat_message':
                           return {
-                            text: 'رسالة متابعة وتحديث 💬',
+                            text: 'رسالة متابعة وتحديث',
                             cls: 'bg-slate-200 text-slate-800',
                           };
                         default:
                           return {
                             text:
                               ev.status === 'operational'
-                                ? 'فحص ميداني: سليم 🟢'
+                                ? 'فحص ميداني: سليم'
                                 : ev.status === 'needs_maintenance'
-                                ? 'فتح بلاغ: يحتاج معالجة 🟡'
-                                : 'فتح بلاغ طارئ: عاطل 🚨',
+                                ? 'فتح بلاغ: يحتاج معالجة'
+                                : 'فتح بلاغ طارئ: عاطل',
                             cls:
                               ev.status === 'operational'
                                 ? 'bg-emerald-50 text-emerald-700'

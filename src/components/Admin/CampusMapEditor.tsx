@@ -1,5 +1,5 @@
 // ============================================================================
-// 🗺️ محرر مواقع المباني ومخطط الحرم (2D & 3D Campus Masterplan Editor)
+// محرر مواقع المباني ومخطط الحرم (2D & 3D Campus Masterplan Editor)
 // محرر خرائط متكامل فائق السلاسة والدقة لتحديد مواقع المباني الـ 34
 // وضبط صورة المخطط/الأقمار الصناعية للأبعاد الثنائية والثلاثية
 // ============================================================================
@@ -270,7 +270,7 @@ export const CampusMapEditor: React.FC = () => {
       saveCampusMapConfig(updatedConfig, false);
       setHasUnsavedChanges(false);
       setShowImageDrawer(true);
-      setCloudStatusMsg('تم رفع ومعالجة صورة المخطط بنجاح ✓');
+      setCloudStatusMsg('تم رفع ومعالجة صورة المخطط بنجاح');
       setTimeout(() => setCloudStatusMsg(null), 3500);
     } catch (err) {
       console.error('[CampusMapEditor] Image optimization error:', err);
@@ -291,7 +291,7 @@ export const CampusMapEditor: React.FC = () => {
       saveCampusMapConfig(updatedConfig, false);
       setHasUnsavedChanges(false);
       setShowImageDrawer(false);
-      setCloudStatusMsg('تمت إزالة صورة المخطط ✓');
+      setCloudStatusMsg('تمت إزالة صورة المخطط');
       setTimeout(() => setCloudStatusMsg(null), 3000);
     }
   };
@@ -334,7 +334,7 @@ export const CampusMapEditor: React.FC = () => {
       setConfig(updatedConfig);
       saveCampusMapConfig(updatedConfig, false);
       setHasUnsavedChanges(false);
-      setCloudStatusMsg('تمت استعادة التوزيع الشبكي الافتراضي ✓');
+      setCloudStatusMsg('تمت استعادة التوزيع الشبكي الافتراضي');
       setTimeout(() => setCloudStatusMsg(null), 3000);
     }
   };
@@ -348,7 +348,7 @@ export const CampusMapEditor: React.FC = () => {
       setIsSavingCloud(false);
       setHasUnsavedChanges(false);
       setShowImageDrawer(false);
-      setCloudStatusMsg('تمت إعادة الضبط الافتراضي للخريطة سحابياً ومحلياً ✓');
+      setCloudStatusMsg('تمت إعادة الضبط الافتراضي للخريطة سحابياً ومحلياً');
       setTimeout(() => setCloudStatusMsg(null), 4000);
     }
   };
@@ -360,7 +360,7 @@ export const CampusMapEditor: React.FC = () => {
     try {
       saveCampusMapConfig(config, true);
       setHasUnsavedChanges(false);
-      setCloudStatusMsg('تم حفظ ونشر المخطط بنجاح لجميع المستخدمين ✓');
+      setCloudStatusMsg('تم حفظ ونشر المخطط بنجاح لجميع المستخدمين');
       setTimeout(() => setCloudStatusMsg(null), 4000);
     } catch (err: any) {
       setCloudStatusMsg(`خطأ أثناء الحفظ السحابي: ${err?.message || 'تعذر الاتصال'}`);

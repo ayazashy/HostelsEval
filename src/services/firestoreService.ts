@@ -1,5 +1,5 @@
 // ============================================================================
-// 🔥 HostelsEval — Firestore Data Service
+// HostelsEval — Firestore Data Service
 // Real-time synchronization + LocalStorage offline resilience + Security Token Gate
 // Protected by Cloud Document Secret Token Matching
 // ============================================================================

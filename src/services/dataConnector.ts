@@ -1,5 +1,5 @@
 // ============================================================================
-// 🌐 HostelsEval — Cloud Database Client & Persistence Connector
+// HostelsEval — Cloud Database Client & Persistence Connector
 // Dynamic Runtime Vector • Zero Plaintext Config in Repository
 // ============================================================================
 

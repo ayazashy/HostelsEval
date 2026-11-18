@@ -1,5 +1,5 @@
 // ============================================================================
-// 🏗️ Building Architecture & Campus Map Placement Store
+// Building Architecture & Campus Map Placement Store
 // Custom Floors & Towers per Floor + Satellite/Google Maps Geo-Placement
 // ============================================================================
 

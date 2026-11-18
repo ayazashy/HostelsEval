@@ -1,5 +1,5 @@
 // ============================================================================
-// 📸 HostelsEval — High Efficiency Client-side Media & Attachment Processor
+// HostelsEval — High Efficiency Client-side Media & Attachment Processor
 // Converts photos to ultra-compact Base64 (<60KB) for Firestore safe storage
 // Also processes short videos / PDFs with strict size validation (<380KB)
 // ============================================================================
@@ -75,8 +75,8 @@ export async function compressAndWatermarkImage(
           hour12: true,
         });
 
-        const idText = metadata?.fixtureId ? `📌 ${metadata.fixtureId}` : '🏢 HostelsEval';
-        const timeText = `⏱️ ${dateStr} - ${timeStr}`;
+        const idText = metadata?.fixtureId ? metadata.fixtureId : 'HostelsEval';
+        const timeText = `${dateStr} - ${timeStr}`;
 
         ctx.font = 'bold 12px "Inter", "Segoe UI", Tahoma, sans-serif';
         ctx.fillStyle = '#ffffff';

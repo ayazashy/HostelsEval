@@ -1,5 +1,5 @@
 // ============================================================================
-// ⏱️ السجل الزمني ومتابعة الإصلاحات (Inspection Timeline & Follow-up Tracker)
+// السجل الزمني ومتابعة الإصلاحات (Inspection Timeline & Follow-up Tracker)
 // Light Mode - Clean Architectural Style
 // ============================================================================
 
@@ -21,6 +21,8 @@ import {
   Check,
   ChevronDown,
   Maximize2,
+  Droplets,
+  X,
 } from 'lucide-react';
 import { ImageViewerModal } from '../Common/ImageViewerModal';
 
@@ -271,13 +273,20 @@ export const TimelineViewer: React.FC<TimelineViewerProps> = ({
                         {entry.defects.map((d, i) => (
                           <span
                             key={i}
-                            className={`text-xs px-2 py-0.5 rounded-lg font-bold border ${
+                            className={`text-xs px-2 py-0.5 rounded-lg font-bold border inline-flex items-center gap-1 ${
                               d === 'leak'
-                                ? 'bg-rose-100 border-rose-300 text-rose-800 animate-pulse'
+                                ? 'bg-rose-100 border-rose-300 text-rose-800'
                                 : 'bg-amber-100 border-amber-300 text-amber-800'
                             }`}
                           >
-                            {d === 'leak' ? '💧 تسريب مياه' : d}
+                            {d === 'leak' ? (
+                              <>
+                                <Droplets className="w-3 h-3" />
+                                <span>تسريب مياه</span>
+                              </>
+                            ) : (
+                              d
+                            )}
                           </span>
                         ))}
 
@@ -323,7 +332,7 @@ export const TimelineViewer: React.FC<TimelineViewerProps> = ({
                       <div className="flex flex-wrap items-center gap-2 text-xs">
                         <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 px-2.5 py-0.5 rounded-lg font-bold flex items-center gap-1">
                           <CheckCircle2 className="w-3.5 h-3.5" />
-                          تمت المعالجة والإصلاح بنجاح ✅
+                          <span>تمت المعالجة والإصلاح بنجاح</span>
                         </span>
                         {entry.resolvedBy && (
                           <span className="text-slate-600">
@@ -381,10 +390,12 @@ export const TimelineViewer: React.FC<TimelineViewerProps> = ({
                 توثيق إتمام الإصلاح والمعالجة
               </h3>
               <button
+                type="button"
                 onClick={() => setResolvingEntryId(null)}
-                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 bg-slate-100 hover:bg-slate-200 transition"
+                title="إغلاق"
               >
-                ✕
+                <X className="w-4 h-4" />
               </button>
             </div>
 

@@ -1,5 +1,5 @@
 // ============================================================================
-// 🔐 Salted SHA-256 Authentication Hashes (Zero Plaintext Passwords in Repo)
+// Salted SHA-256 Authentication Hashes (Zero Plaintext Passwords in Repo)
 // ============================================================================
 
 export const AUTH_HASH_SALT = 'ksu_hostels_eval_auth_v3';

@@ -1,5 +1,5 @@
 // ============================================================================
-// 🔧 بوابة الصيانة المكثفة (الأقسام الأربعة) وبوابة النظافة ومكافحة الآفات
+// بوابة الصيانة المكثفة (الأقسام الأربعة) وبوابة النظافة ومكافحة الآفات
 // تدعم: فصل مسار الصيانة عن النظافة تماماً، فلترة الأقسام الأربعة، عرض ثنائي اللغة
 // (عربي / English) لتجاوز تعدد الجنسيات، إرفاق صورة الإصلاح، ومحادثة المرفق المستمرة
 // ============================================================================
@@ -764,11 +764,11 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                           }`}
                         >
                           {ticketStatus === 'reopened'
-                            ? 'معاد فتحه / Reopened 🔄'
+                            ? 'معاد فتحه / Reopened'
                             : ticketStatus === 'pending_evaluation'
-                            ? 'بانتظار اعتماد الرائد ⭐'
+                            ? 'بانتظار اعتماد الرائد'
                             : ticketStatus === 'verified_closed'
-                            ? 'معتمد ✅'
+                            ? 'معتمد ومغلق'
                             : ticketStatus === 'in_progress'
                             ? 'قيد التنفيذ / In Progress'
                             : 'بلاغ جديد / Open'}
@@ -808,7 +808,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                         {copiedId === item.id ? (
                           <>
                             <Check className="w-3.5 h-3.5 text-emerald-600" />
-                            <span className="text-emerald-700">تم النسخ ✓</span>
+                            <span className="text-emerald-700">تم النسخ</span>
                           </>
                         ) : (
                           <>
@@ -1039,7 +1039,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                         {copiedLinkId === item.id ? (
                           <>
                             <Check className="w-3.5 h-3.5" />
-                            <span>تم نسخ رابط الاعتماد ✓</span>
+                            <span>تم نسخ رابط الاعتماد</span>
                           </>
                         ) : (
                           <>
@@ -1066,7 +1066,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                       {ticket?.ksuEvaluationConfirmed && (
                         <span className="text-[11px] text-emerald-700 flex items-center gap-1">
                           <Check className="w-3.5 h-3.5" />
-                          <span>تم تأكيد رفع تقييم الخدمة في نماذج الجامعة (مكتمل) ✓</span>
+                          <span>تم تأكيد رفع تقييم الخدمة في نماذج الجامعة (مكتمل)</span>
                         </span>
                       )}
                     </div>

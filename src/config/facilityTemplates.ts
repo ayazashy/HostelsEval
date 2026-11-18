@@ -1,5 +1,5 @@
 // ============================================================================
-// 🏢 HostelsEval — Standardized Intensive Maintenance & Services Matrix (V3)
+// HostelsEval — Standardized Intensive Maintenance & Services Matrix (V3)
 // Built directly from: نطاق بلاغات الصيانة العامة.docx + Hygiene & Pest Control
 // ============================================================================
 
@@ -796,7 +796,7 @@ export const DEFECT_TAGS: DefectTag[] = [
   },
   {
     id: 'pst_rodents_mice',
-    labelAr: 'رصد قوارض (فئران / جرذان) أو آثارها 🚨',
+    labelAr: 'رصد قوارض (فئران / جرذان) أو آثارها (طارئ)',
     labelEn: 'Rodents Spotted (Mice / Rats) - Urgent',
     category: 'hygiene',
     department: 'pest_control',
@@ -1596,7 +1596,7 @@ export const ALL_FACILITY_CATEGORIES: FacilityCategoryConfig[] = [
 ];
 
 // ============================================================================
-// ⚙️ Dynamic Custom Facilities Manager (V3 Storage Key)
+// Dynamic Custom Facilities Manager (V3 Storage Key)
 // ============================================================================
 
 const CUSTOM_FACILITIES_KEY = 'hostels_custom_facilities_config_v3';

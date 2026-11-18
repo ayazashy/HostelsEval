@@ -1,5 +1,5 @@
 // ============================================================================
-// 🛡️ Error Boundary (Light Mode)
+// Error Boundary (Light Mode)
 // Prevents React white-screen crashes and provides graceful recovery
 // ============================================================================
 

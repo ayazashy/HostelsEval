@@ -1,5 +1,5 @@
 // ============================================================================
-// 🏢 HostelsEval — 34 Buildings Campus Registry
+// HostelsEval — 34 Buildings Campus Registry
 // ============================================================================
 
 import { BuildingInfo } from '../types/hostel';

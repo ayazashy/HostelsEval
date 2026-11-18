@@ -1,5 +1,5 @@
 // ============================================================================
-// 🔐 وحدة إدارة حالة الجلسات (In-Memory + LocalStorage Persistent Session Store)
+// وحدة إدارة حالة الجلسات (In-Memory + LocalStorage Persistent Session Store)
 // Zero Circular Dependencies • Isolated State Management
 // ============================================================================
 

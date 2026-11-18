@@ -1,27 +1,29 @@
 // ============================================================================
-// 🏛️ الصفحة الرئيسية ومجسم الـ 3D لجميع المباني + لوحة الأرقام الإجمالية
-// Landing Page: 3D Visualization for All 34 Buildings & Comprehensive KPI Dashboard
+// الصفحة الرئيسية ومجسم الـ 3D لجميع المباني + لوحة المؤشرات الشاملة
+// Landing Page: 3D Visualization for All 34 Buildings & Comprehensive Dashboard
 // ============================================================================
 
 import React, { useState } from 'react';
 import { BuildingInfo, FixtureEvaluation } from '../../types/hostel';
 import { computeCampusStats, getScoreColor } from '../../utils/healthScore';
+import { resolveEvaluationDepartment } from '../../config/facilityTemplates';
 import { Campus3DViewer } from '../3D/Campus3DViewer';
 import {
-  Droplets,
   AlertOctagon,
-  Flame,
   Search,
   Filter,
   ArrowUpDown,
   Building,
   FileText,
-  Layers,
   ShieldCheck,
   CheckCircle2,
   AlertTriangle,
   XCircle,
   LogIn,
+  Wrench,
+  Clock,
+  Droplets,
+  Zap,
 } from 'lucide-react';
 
 interface CampusOverviewProps {
@@ -34,6 +36,14 @@ interface CampusOverviewProps {
   canOpenReport?: boolean;
 }
 
+type CampusFilterMode =
+  | 'all'
+  | 'uninspected'
+  | 'has_issues'
+  | 'critical'
+  | 'plumbing'
+  | 'tech_civil';
+
 export const CampusOverview: React.FC<CampusOverviewProps> = ({
   buildings,
   allEvaluations,
@@ -44,15 +54,11 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
   canOpenReport = false,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterDefect, setFilterDefect] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<'worst' | 'best' | 'number'>('worst');
+  const [filterMode, setFilterMode] = useState<CampusFilterMode>('all');
+  const [sortBy, setSortBy] = useState<'worst' | 'best' | 'issues' | 'number'>('number');
 
   const campusStats = computeCampusStats(buildings, allEvaluations);
-
-  // Compute Total Numbers
-  const totalBuildingsCount = buildings.length; // 34
-  const totalWingsCount = totalBuildingsCount * 4; // 136
-  const totalFloorsCount = totalBuildingsCount * 5; // 170
+  const totalBuildingsCount = buildings.length;
 
   // Health distribution
   const uninspectedBuildingsCount = buildings.filter(
@@ -72,36 +78,52 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
     (b) => b.healthScore !== undefined && b.healthScore !== null && b.healthScore < 50
   ).length;
 
+  const buildingsWithIssuesCount = buildings.filter((b) =>
+    allEvaluations.some(
+      (e) => !e.isDeleted && e.buildingId === b.id && e.status !== 'operational'
+    )
+  ).length;
+
   const filteredBuildings = buildings
     .filter((b) => {
       const matchesSearch =
-        b.nameAr.includes(searchQuery) || b.id.toLowerCase().includes(searchQuery.toLowerCase());
+        b.nameAr.includes(searchQuery) ||
+        b.id.toLowerCase().includes(searchQuery.toLowerCase());
 
       if (!matchesSearch) return false;
 
-      if (filterDefect === 'uninspected') {
+      const bEvals = allEvaluations.filter(
+        (e) => !e.isDeleted && e.buildingId === b.id
+      );
+
+      if (filterMode === 'uninspected') {
         return b.healthScore === undefined || b.healthScore === null;
       }
-      if (filterDefect === 'leak') {
-        return allEvaluations.some((e) => e.buildingId === b.id && e.defects.includes('leak'));
+      if (filterMode === 'has_issues') {
+        return bEvals.some((e) => e.status !== 'operational');
       }
-      if (filterDefect === 'toilet') {
-        return allEvaluations.some(
-          (e) => e.buildingId === b.id && e.fixtureTypeCode === 'TOI' && e.status === 'broken'
+      if (filterMode === 'critical') {
+        return (
+          b.healthScore !== undefined && b.healthScore !== null && b.healthScore < 50
         );
       }
-      if (filterDefect === 'shower') {
-        return allEvaluations.some(
-          (e) => e.buildingId === b.id && e.fixtureTypeCode === 'SHW' && e.status === 'broken'
+      if (filterMode === 'plumbing') {
+        return bEvals.some(
+          (e) =>
+            e.status !== 'operational' &&
+            resolveEvaluationDepartment(e) === 'plumbing'
         );
       }
-      if (filterDefect === 'heater') {
-        return allEvaluations.some(
-          (e) => e.buildingId === b.id && e.defects.includes('cold_heater')
-        );
-      }
-      if (filterDefect === 'critical') {
-        return b.healthScore !== undefined && b.healthScore !== null && b.healthScore < 50;
+      if (filterMode === 'tech_civil') {
+        return bEvals.some((e) => {
+          if (e.status === 'operational') return false;
+          const dept = resolveEvaluationDepartment(e);
+          return (
+            dept === 'electrical' ||
+            dept === 'hvac_mechanical' ||
+            dept === 'carpentry_civil'
+          );
+        });
       }
       return true;
     })
@@ -109,12 +131,17 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
       if (sortBy === 'worst') {
         const valA = a.healthScore ?? 999;
         const valB = b.healthScore ?? 999;
-        return valA - valB;
+        return valA - valB || a.number - b.number;
       }
       if (sortBy === 'best') {
         const valA = a.healthScore ?? -1;
         const valB = b.healthScore ?? -1;
-        return valB - valA;
+        return valB - valA || a.number - b.number;
+      }
+      if (sortBy === 'issues') {
+        const issuesA = a.stats.activeDefectsCount || 0;
+        const issuesB = b.stats.activeDefectsCount || 0;
+        return issuesB - issuesA || a.number - b.number;
       }
       return a.number - b.number;
     });
@@ -126,13 +153,13 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
           <div>
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse" />
+              <span className="w-2.5 h-2.5 rounded-full bg-blue-600 shrink-0" />
               <h2 className="text-base font-bold text-slate-900">
-                خريطة مجمع الإسكان (34 مبنى)
+                خريطة مجمع الإسكان ({totalBuildingsCount} مبنى)
               </h2>
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              انقر على أي مبنى لمعاينة أجنحته وتفاصيل الفحص الميداني
+              انقر على أي مبنى لمعاينة حالة المرافق وتفاصيل التقييم الميداني
             </p>
           </div>
 
@@ -167,7 +194,7 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
         />
       </section>
 
-      {/* 2. THE TOTAL NUMBERS DASHBOARD */}
+      {/* 2. THE TOTAL NUMBERS DASHBOARD (Comprehensive Across All Trades & Categories) */}
       <section className="flex flex-col gap-4">
         <div className="flex items-center justify-between border-b border-slate-200 pb-2">
           <div className="flex items-center gap-2">
@@ -179,111 +206,117 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
         </div>
 
         {/* Top 4 Primary Metric Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-          {/* Total Buildings & Wings */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          {/* Card 1: Audited vs Uninspected Buildings */}
           <div className="bg-white border border-blue-200 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-600">المباني والأجنحة</span>
+              <span className="text-xs font-bold text-slate-600">تغطية مباني المجمع</span>
               <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
                 <Building className="w-5 h-5" />
               </div>
             </div>
             <div className="mt-3 flex items-baseline gap-2">
               <span className="text-3xl sm:text-4xl font-black text-blue-700 font-mono">
-                {totalBuildingsCount}
+                {campusStats.auditedBuildings}
               </span>
-              <span className="text-xs text-slate-600 font-bold">مبنى</span>
+              <span className="text-xs text-slate-600 font-bold">
+                من {totalBuildingsCount} مبنى مفحوص
+              </span>
             </div>
             <div className="mt-2 pt-2 border-t border-slate-100 text-[11px] text-slate-500 flex justify-between">
-              <span>{totalWingsCount} جناح</span>
-              <span>{totalFloorsCount} دور</span>
+              <span>{uninspectedBuildingsCount} لم يبدأ الفحص</span>
+              <span>{campusStats.totalFixturesCount} مرفق مسجل</span>
             </div>
           </div>
 
-          {/* Active Water Leaks */}
-          <div className="bg-white border border-rose-200 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col justify-between">
+          {/* Card 2: Total Active Issues & Tickets Across ALL Departments */}
+          <div className="bg-white border border-amber-200 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-600">تسريبات المياه</span>
-              <div className="p-2 rounded-xl bg-rose-50 text-rose-600">
-                <Droplets className="w-5 h-5" />
+              <span className="text-xs font-bold text-slate-600">
+                إجمالي البلاغات والأعطال النشطة
+              </span>
+              <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
+                <Wrench className="w-5 h-5" />
               </div>
             </div>
             <div className="mt-3 flex items-baseline gap-2">
-              <span className="text-3xl sm:text-4xl font-black text-rose-600 font-mono">
-                {campusStats.totalLeaksCount}
+              <span className="text-3xl sm:text-4xl font-black text-amber-700 font-mono">
+                {campusStats.totalActiveIssuesCount}
               </span>
-              <span className="text-xs text-rose-700 font-bold">مرفق يسرب</span>
+              <span className="text-xs text-amber-800 font-bold">مرفق يحتاج معالجة</span>
             </div>
-            <div className="mt-2 pt-2 border-t border-slate-100 text-[11px] text-rose-600 font-bold flex items-center justify-between">
-              <span>تسريب نشط</span>
-              <span>يتطلب صيانة</span>
+            <div className="mt-2 pt-2 border-t border-slate-100 text-[11px] text-slate-600 flex items-center justify-between">
+              <span>{campusStats.totalNeedsMaintenance} يحتاج صيانة/نظافة</span>
+              <span className="text-rose-600 font-bold">{campusStats.totalBrokenOutages} عاطل</span>
             </div>
           </div>
 
-          {/* Critical Broken Outages */}
-          <div className="bg-white border border-amber-200 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col justify-between">
+          {/* Card 3: Critical Outages (Broken) */}
+          <div className="bg-white border border-rose-200 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-600">مرافق عاطلة</span>
-              <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
+              <span className="text-xs font-bold text-slate-600">مرافق عاطلة / طارئة</span>
+              <div className="p-2 rounded-xl bg-rose-50 text-rose-600">
                 <AlertOctagon className="w-5 h-5" />
               </div>
             </div>
             <div className="mt-3 flex items-baseline gap-2">
-              <span className="text-3xl sm:text-4xl font-black text-amber-600 font-mono">
-                {campusStats.totalCriticalToilets + campusStats.totalBrokenShowers}
+              <span className="text-3xl sm:text-4xl font-black text-rose-600 font-mono">
+                {campusStats.totalBrokenOutages}
               </span>
-              <span className="text-xs text-amber-700 font-bold">خارج الخدمة</span>
+              <span className="text-xs text-rose-700 font-bold">خارج الخدمة</span>
             </div>
             <div className="mt-2 pt-2 border-t border-slate-100 text-[11px] text-slate-500 flex justify-between">
-              <span>{campusStats.totalCriticalToilets} مرحاض مسدود</span>
-              <span>{campusStats.totalBrokenShowers} مروش متضرر</span>
+              <span>{buildingsWithIssuesCount} مبنى بها بلاغات</span>
+              <span className="text-rose-700 font-bold">أولوية عاجلة</span>
             </div>
           </div>
 
-          {/* Campus Average Health */}
+          {/* Card 4: Campus Average Readiness & Safety */}
           <div className="bg-white border border-emerald-200 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-600">مؤشر السلامة العام</span>
+              <span className="text-xs font-bold text-slate-600">مؤشر الجاهزية والسلامة</span>
               <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
                 <ShieldCheck className="w-5 h-5" />
               </div>
             </div>
             <div className="mt-3 flex items-baseline gap-2">
               <span className="text-3xl sm:text-4xl font-black text-emerald-600 font-mono">
-                %{campusStats.campusAverageHealth}
+                {campusStats.auditedBuildings > 0
+                  ? `%${campusStats.campusAverageHealth}`
+                  : '—'}
               </span>
-              <span className="text-xs text-slate-500 font-medium">نسبة الجودة</span>
+              <span className="text-xs text-slate-500 font-medium">متوسط المباني المفحوصة</span>
             </div>
             <div className="mt-2 pt-2 border-t border-slate-100 text-[11px] text-slate-600 flex justify-between">
-              <span>{allEvaluations.length} فحص موثق</span>
-              <span className="text-emerald-700 font-bold">حالة مستقرة</span>
+              <span>{campusStats.totalOperationalCount} مرفق سليم</span>
+              <span className="text-emerald-700 font-bold">حالة التشغيل</span>
             </div>
           </div>
         </div>
 
-        {/* Secondary Total Numbers Summary Row: Building Health Distribution */}
+        {/* Secondary Summary Row: Building Health Distribution */}
         <div className="bg-white border border-slate-200 rounded-2xl p-3.5 sm:p-4 shadow-sm flex flex-col md:flex-row items-center justify-between gap-3">
           <div className="flex items-center gap-2.5 w-full md:w-auto flex-wrap">
-            <span className="text-xs font-bold text-slate-700 shrink-0">حالة المباني:</span>
+            <span className="text-xs font-bold text-slate-700 shrink-0">تصنيف حالة المباني:</span>
             <div className="flex items-center gap-2 flex-wrap">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-100 border border-slate-300 text-slate-700 text-xs font-bold">
-                <span className="w-2 h-2 rounded-full bg-slate-400" />
-                <span>{uninspectedBuildingsCount} غير مفحوص</span>
+                <Clock className="w-3.5 h-3.5 text-slate-500" />
+                <span>{uninspectedBuildingsCount} لم يفحص</span>
               </span>
 
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span>{healthyBuildingsCount} سليم (%80-%100)</span>
+                <span>{healthyBuildingsCount} سليم (80%-100%)</span>
               </span>
 
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold">
                 <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                <span>{maintenanceBuildingsCount} صيانة (%50-%79)</span>
+                <span>{maintenanceBuildingsCount} صيانة (50%-79%)</span>
               </span>
 
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold">
                 <XCircle className="w-3.5 h-3.5 text-rose-600" />
-                <span>{criticalBuildingsCount} حرج (&lt;%50)</span>
+                <span>{criticalBuildingsCount} حرج (&lt;50%)</span>
               </span>
             </div>
           </div>
@@ -305,13 +338,14 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
             />
           </div>
 
-          {/* Filter Chips */}
+          {/* Filter Chips (All Icons via Lucide - Zero Emojis) */}
           <div className="flex flex-wrap items-center gap-1.5 w-full md:w-auto">
             <Filter className="w-3.5 h-3.5 text-slate-500 ml-1 hidden sm:block" />
             <button
-              onClick={() => setFilterDefect('all')}
+              type="button"
+              onClick={() => setFilterMode('all')}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
-                filterDefect === 'all'
+                filterMode === 'all'
                   ? 'bg-slate-900 text-white'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
@@ -319,44 +353,64 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
               الكل ({totalBuildingsCount})
             </button>
             <button
-              onClick={() => setFilterDefect('uninspected')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
-                filterDefect === 'uninspected'
+              type="button"
+              onClick={() => setFilterMode('uninspected')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                filterMode === 'uninspected'
                   ? 'bg-slate-700 text-white'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
-              <span>⚪ غير مفحوص ({uninspectedBuildingsCount})</span>
+              <Clock className="w-3.5 h-3.5" />
+              <span>لم يفحص ({uninspectedBuildingsCount})</span>
             </button>
             <button
-              onClick={() => setFilterDefect('critical')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
-                filterDefect === 'critical'
+              type="button"
+              onClick={() => setFilterMode('has_issues')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                filterMode === 'has_issues'
+                  ? 'bg-amber-600 text-white'
+                  : 'bg-amber-50 text-amber-800 hover:bg-amber-100'
+              }`}
+            >
+              <Wrench className="w-3.5 h-3.5" />
+              <span>بها أعطال ({buildingsWithIssuesCount})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterMode('critical')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                filterMode === 'critical'
                   ? 'bg-rose-600 text-white'
                   : 'bg-rose-50 text-rose-700 hover:bg-rose-100'
               }`}
             >
-              <span>🚨 حرج ({criticalBuildingsCount})</span>
+              <AlertOctagon className="w-3.5 h-3.5" />
+              <span>حرج ({criticalBuildingsCount})</span>
             </button>
             <button
-              onClick={() => setFilterDefect('leak')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
-                filterDefect === 'leak'
+              type="button"
+              onClick={() => setFilterMode('plumbing')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                filterMode === 'plumbing'
                   ? 'bg-blue-600 text-white'
                   : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
               }`}
             >
-              <span>💧 تسريب مياه ({campusStats.totalLeaksCount})</span>
+              <Droplets className="w-3.5 h-3.5" />
+              <span>سباكة</span>
             </button>
             <button
-              onClick={() => setFilterDefect('toilet')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
-                filterDefect === 'toilet'
-                  ? 'bg-amber-600 text-white'
-                  : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+              type="button"
+              onClick={() => setFilterMode('tech_civil')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                filterMode === 'tech_civil'
+                  ? 'bg-purple-700 text-white'
+                  : 'bg-purple-50 text-purple-800 hover:bg-purple-100'
               }`}
             >
-              <span>🚽 مراحيض ({campusStats.totalCriticalToilets})</span>
+              <Zap className="w-3.5 h-3.5" />
+              <span>كهرباء / تكييف / مدني</span>
             </button>
           </div>
 
@@ -369,9 +423,10 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
               onChange={(e) => setSortBy(e.target.value as any)}
               className="bg-slate-50 border border-slate-300 text-slate-900 text-xs rounded-xl px-2.5 py-1.5 font-bold cursor-pointer"
             >
-              <option value="worst">الأكثر تضرراً أولاً</option>
-              <option value="best">الأفضل صحة أولاً</option>
               <option value="number">تسلسل أرقام المباني (1-34)</option>
+              <option value="issues">الأكثر بلاغات وأعطالاً أولاً</option>
+              <option value="worst">الأقل جاهزية أولاً</option>
+              <option value="best">الأفضل حالة أولاً</option>
             </select>
           </div>
         </div>
@@ -379,10 +434,15 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
         {/* 34 Buildings Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {filteredBuildings.map((building) => {
-            const bEvals = allEvaluations.filter((e) => e.buildingId === building.id);
+            const bEvals = allEvaluations.filter(
+              (e) => !e.isDeleted && e.buildingId === building.id
+            );
             const colorDef = getScoreColor(building.healthScore);
-            const leaksCount = bEvals.filter((e) => e.defects.includes('leak')).length;
             const brokenCount = bEvals.filter((e) => e.status === 'broken').length;
+            const needsMaintCount = bEvals.filter(
+              (e) => e.status === 'needs_maintenance'
+            ).length;
+            const totalIssuesCount = brokenCount + needsMaintCount;
 
             return (
               <div
@@ -424,27 +484,41 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
                   </div>
                 </div>
 
-                {/* Defect Indicators */}
-                <div className="flex items-center gap-2 text-xs pt-2 border-t border-slate-100">
-                  {leaksCount > 0 ? (
-                    <span className="text-rose-600 font-bold flex items-center gap-1">
-                      <Droplets className="w-3.5 h-3.5" />
-                      <span>{leaksCount} تسريب</span>
+                {/* Comprehensive Facility Status Row (Never defaults to "no leaks"!) */}
+                <div className="flex flex-wrap items-center gap-2 text-xs pt-2 border-t border-slate-100">
+                  {bEvals.length === 0 ? (
+                    <span className="text-slate-400 text-[11px] flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-slate-400" />
+                      <span>لم يتم الفحص الميداني بعد</span>
+                    </span>
+                  ) : totalIssuesCount === 0 ? (
+                    <span className="text-emerald-700 font-bold text-[11px] flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>سليم بالكامل ({bEvals.length} مرفق مفحوص)</span>
                     </span>
                   ) : (
-                    <span className="text-slate-400 text-[11px]">لا توجد تسريبات</span>
-                  )}
-
-                  {brokenCount > 0 && (
-                    <span className="text-amber-600 font-bold flex items-center gap-1">
-                      <AlertOctagon className="w-3.5 h-3.5" />
-                      <span>{brokenCount} معطل</span>
-                    </span>
+                    <>
+                      {brokenCount > 0 && (
+                        <span className="text-rose-600 font-bold flex items-center gap-1">
+                          <AlertOctagon className="w-3.5 h-3.5" />
+                          <span>{brokenCount} عاطل</span>
+                        </span>
+                      )}
+                      {needsMaintCount > 0 && (
+                        <span className="text-amber-700 font-bold flex items-center gap-1">
+                          <Wrench className="w-3.5 h-3.5" />
+                          <span>{needsMaintCount} يحتاج معالجة</span>
+                        </span>
+                      )}
+                      <span className="text-[11px] text-slate-400 mr-auto font-mono">
+                        ({bEvals.length} فحص)
+                      </span>
+                    </>
                   )}
                 </div>
 
                 <div className="text-[11px] text-blue-600 font-bold flex items-center justify-between pt-1">
-                  <span>معاينة الأجنحة والفحص</span>
+                  <span>معاينة المرافق والتفاصيل</span>
                   <span className="transform group-hover:-translate-x-1 transition">←</span>
                 </div>
               </div>

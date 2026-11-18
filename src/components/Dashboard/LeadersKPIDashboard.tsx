@@ -1,5 +1,5 @@
 // ============================================================================
-// 📊 لوحة مؤشرات الأداء وتقييم رواد المباني (Building Leaders KPI & Full-Scan Dashboard)
+// لوحة مؤشرات الأداء وتقييم رواد المباني (Building Leaders KPI & Full-Scan Dashboard)
 // Evaluate all 34 Building Leaders on 100% initial building scan completion,
 // period activity (Last 7/14/30 days or specific month), documentation quality, and follow-up.
 // ============================================================================
@@ -960,8 +960,9 @@ export const LeadersKPIDashboard: React.FC<LeadersKPIDashboardProps> = ({
                               بانتظار اعتماده: {row.pendingLeaderApprovalCount}
                             </span>
                           ) : (
-                            <span className="text-[10px] text-emerald-600 font-bold">
-                              لا توجد بلاغات معلقة ✓
+                            <span className="text-[10px] text-emerald-600 font-bold inline-flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" />
+                              <span>لا توجد بلاغات معلقة</span>
                             </span>
                           )}
                         </div>

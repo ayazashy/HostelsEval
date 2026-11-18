@@ -1,5 +1,5 @@
 // ============================================================================
-// 🏢 HostelsEval Core Type Definitions (V2)
+// HostelsEval Core Type Definitions (V2)
 // Clean architecture: Gatekeeping, Feature Flags, Impersonation, and Audit Logs
 // ============================================================================
 
@@ -246,6 +246,10 @@ export interface CampusStats {
   auditedBuildings: number;
   uninspectedBuildings: number;
   totalFixturesCount: number;
+  totalOperationalCount: number;
+  totalActiveIssuesCount: number;
+  totalNeedsMaintenance: number;
+  totalBrokenOutages: number;
   totalLeaksCount: number;
   totalCriticalToilets: number;
   totalBrokenShowers: number;
