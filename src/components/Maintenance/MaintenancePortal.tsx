@@ -108,7 +108,8 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
     setSelectedDepartment('ALL');
   }, [portalRole]);
 
-  const isCleaningMode = activeTrack === 'cleaning';
+  const effectiveTrack = isAdmin ? activeTrack : portalRole;
+  const isCleaningMode = effectiveTrack === 'cleaning';
   const categories = React.useMemo(() => loadActiveFacilityCategories(), []);
 
   const getFixtureBilingualName = (

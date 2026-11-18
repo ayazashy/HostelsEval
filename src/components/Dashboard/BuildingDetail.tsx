@@ -29,6 +29,11 @@ interface BuildingDetailProps {
   onOpenAudit: (wingId?: number, floor?: number) => void;
   onOpenReport: () => void;
   isAuthenticated?: boolean;
+  canViewSensitiveDetails?: boolean;
+  canOpenReport?: boolean;
+  canResolveTimeline?: boolean;
+  isViewerOnly?: boolean;
+  currentUserName?: string;
   onOpenLogin?: () => void;
 }
 
@@ -39,6 +44,11 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
   onOpenAudit,
   onOpenReport,
   isAuthenticated = false,
+  canViewSensitiveDetails = false,
+  canOpenReport = false,
+  canResolveTimeline = false,
+  isViewerOnly = false,
+  currentUserName = 'إدارة الإسكان',
   onOpenLogin,
 }) => {
   const [selectedWing, setSelectedWing] = useState<number | null>(null);
@@ -53,7 +63,11 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
     setSelectedFloor(floor);
   };
 
-  const photoEvaluations = evaluations.filter((e) => e.photoBase64);
+  const photoEvaluations = canViewSensitiveDetails
+    ? evaluations.filter(
+        (e) => e.photoBase64 || (e.media && e.media.some((m) => m.type === 'image'))
+      )
+    : [];
 
   const wingsSummary = [1, 2, 3, 4].map((wId) => {
     const wEvals = evaluations.filter((e) => e.wingId === wId);
@@ -87,31 +101,39 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
 
         {/* Action Buttons */}
         <div className="flex items-center gap-2.5 self-end sm:self-auto">
-          <button
-            onClick={onOpenReport}
-            className="px-4 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-300 text-slate-700 text-xs font-bold rounded-xl transition flex items-center gap-2 shadow-sm"
-          >
-            <FileDown className="w-4 h-4 text-blue-600" />
-            <span>تقرير المبنى</span>
-          </button>
+          {canOpenReport && (
+            <button
+              onClick={onOpenReport}
+              className="px-4 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-300 text-slate-700 text-xs font-bold rounded-xl transition flex items-center gap-2 shadow-sm"
+            >
+              <FileDown className="w-4 h-4 text-blue-600" />
+              <span>تقرير المبنى</span>
+            </button>
+          )}
 
-          <button
-            onClick={() => {
-              if (isAuthenticated) {
-                onOpenAudit(selectedWing || 1, selectedFloor || 1);
-              } else {
-                onOpenLogin?.();
-              }
-            }}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition flex items-center gap-2 shadow-sm"
-          >
-            {isAuthenticated ? (
+          {isAuthenticated ? (
+            <button
+              onClick={() => onOpenAudit(selectedWing || 1, selectedFloor || 1)}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition flex items-center gap-2 shadow-sm"
+            >
               <ClipboardEdit className="w-4 h-4" />
-            ) : (
-              <Lock className="w-4 h-4 text-blue-200" />
-            )}
-            <span>{isAuthenticated ? 'تسجيل فحص ميداني' : 'دخول رائد المبنى للتفتيش'}</span>
-          </button>
+              <span>تسجيل فحص ميداني</span>
+            </button>
+          ) : isViewerOnly ? (
+            <span className="px-3.5 py-2 bg-indigo-50 border border-indigo-200 text-indigo-800 text-xs font-bold rounded-xl">
+              وضع متابعة المؤشرات (عرض فقط)
+            </span>
+          ) : (
+            onOpenLogin && (
+              <button
+                onClick={onOpenLogin}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition flex items-center gap-2 shadow-sm"
+              >
+                <Lock className="w-4 h-4 text-blue-200" />
+                <span>دخول رائد المبنى للتفتيش</span>
+              </button>
+            )
+          )}
         </div>
       </div>
 
@@ -198,87 +220,111 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
                   </div>
                 </div>
 
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onOpenAudit(wing.wingId, 1);
-                  }}
-                  className="w-full py-1.5 bg-slate-50 hover:bg-blue-600 hover:text-white text-blue-700 border border-slate-200 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1"
-                >
-                  <span>استمارة فحص الجناح</span>
-                  <span>←</span>
-                </button>
+                {isAuthenticated && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenAudit(wing.wingId, 1);
+                    }}
+                    className="w-full py-1.5 bg-slate-50 hover:bg-blue-600 hover:text-white text-blue-700 border border-slate-200 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1"
+                  >
+                    <span>استمارة فحص الجناح</span>
+                    <span>←</span>
+                  </button>
+                )}
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* Photo Evidence Gallery */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col gap-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Camera className="w-5 h-5 text-slate-600" />
-            <h3 className="text-base font-bold text-slate-900">
-              الصور التوثيقية لهذا المبنى ({photoEvaluations.length} صورة)
-            </h3>
-          </div>
-          <span className="text-xs text-slate-500">
-            مختومة بالرقم الفريد والتاريخ
-          </span>
-        </div>
-
-        {photoEvaluations.length === 0 ? (
-          <div className="text-center py-8 border border-dashed border-slate-200 rounded-xl text-slate-400 text-xs flex flex-col items-center justify-center gap-1.5 bg-slate-50/50">
-            <Camera className="w-6 h-6 text-slate-300 stroke-[1.5]" />
-            <span className="font-medium text-slate-500">لا توجد صور توثيقية مسجلة بعد</span>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-            {photoEvaluations.map((item) => (
-              <div
-                key={item.id}
-                onClick={() => setActivePhotoModal(item.photoBase64 || null)}
-                className="group relative rounded-xl overflow-hidden border border-slate-200 bg-slate-100 cursor-pointer shadow-xs hover:shadow-md transition"
-              >
-                <div className="relative w-full h-28 overflow-hidden bg-slate-200">
-                  <img
-                    src={item.photoBase64}
-                    alt={item.id}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                  />
-                  <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-xs text-white p-1 rounded-lg pointer-events-none transition group-hover:bg-blue-600">
-                    <Maximize2 className="w-3.5 h-3.5" />
-                  </div>
-                </div>
-                <div className="p-2 bg-white border-t border-slate-100 flex flex-col">
-                  <span className="text-[10px] font-mono font-bold text-slate-900 truncate">
-                    {item.id}
-                  </span>
-                  <span className="text-[9px] text-slate-500 truncate">
-                    {item.defects.join('، ') || 'توثيق حالة'}
-                  </span>
-                </div>
+      {/* Photo Evidence Gallery & Timeline — Restricted Strictly to Authorized Roles (Never Public!) */}
+      {canViewSensitiveDetails ? (
+        <>
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Camera className="w-5 h-5 text-slate-600" />
+                <h3 className="text-base font-bold text-slate-900">
+                  الصور التوثيقية لهذا المبنى ({photoEvaluations.length} صورة)
+                </h3>
               </div>
-            ))}
+              <span className="text-xs text-slate-500">
+                مختومة بالرقم الفريد والتاريخ
+              </span>
+            </div>
+
+            {photoEvaluations.length === 0 ? (
+              <div className="text-center py-8 border border-dashed border-slate-200 rounded-xl text-slate-400 text-xs flex flex-col items-center justify-center gap-1.5 bg-slate-50/50">
+                <Camera className="w-6 h-6 text-slate-300 stroke-[1.5]" />
+                <span className="font-medium text-slate-500">لا توجد صور توثيقية مسجلة بعد</span>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                {photoEvaluations.map((item) => {
+                  const thumbUrl =
+                    item.photoBase64 ||
+                    item.media?.find((m) => m.type === 'image')?.url ||
+                    '';
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => thumbUrl && setActivePhotoModal(thumbUrl)}
+                      className="group relative rounded-xl overflow-hidden border border-slate-200 bg-slate-100 cursor-pointer shadow-xs hover:shadow-md transition"
+                    >
+                      <div className="relative w-full h-28 overflow-hidden bg-slate-200">
+                        <img
+                          src={thumbUrl}
+                          alt={item.id}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                        />
+                        <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-xs text-white p-1 rounded-lg pointer-events-none transition group-hover:bg-blue-600">
+                          <Maximize2 className="w-3.5 h-3.5" />
+                        </div>
+                      </div>
+                      <div className="p-2 bg-white border-t border-slate-100 flex flex-col">
+                        <span className="text-[10px] font-mono font-bold text-slate-900 truncate">
+                          {item.id}
+                        </span>
+                        <span className="text-[9px] text-slate-500 truncate">
+                          {item.defects.join('، ') || 'توثيق حالة'}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        )}
-      </div>
 
-      {/* Inspection & Defect Timeline */}
-      <TimelineViewer
-        buildingId={building.id}
-        canResolve={isAuthenticated}
-        currentUserName="إدارة الإسكان"
-      />
+          {/* Inspection & Defect Timeline */}
+          <TimelineViewer
+            buildingId={building.id}
+            canResolve={canResolveTimeline}
+            currentUserName={currentUserName}
+          />
 
-      {/* Interactive Full-Screen Image Lightbox with Pinch-to-Zoom */}
-      {activePhotoModal && (
-        <ImageViewerModal
-          src={activePhotoModal}
-          title={`توثيق ${building.nameAr}`}
-          onClose={() => setActivePhotoModal(null)}
-        />
+          {/* Interactive Full-Screen Image Lightbox with Pinch-to-Zoom */}
+          {activePhotoModal && (
+            <ImageViewerModal
+              src={activePhotoModal}
+              title={`توثيق ${building.nameAr}`}
+              onClose={() => setActivePhotoModal(null)}
+            />
+          )}
+        </>
+      ) : (
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm text-center flex flex-col items-center gap-2.5">
+          <div className="w-11 h-11 rounded-2xl bg-slate-100 text-slate-600 flex items-center justify-center">
+            <Lock className="w-5 h-5" />
+          </div>
+          <h3 className="text-sm font-bold text-slate-900">
+            الصور الميدانية وسجل الفحص التفصيلي محمية ومخصصة للمسؤولين فقط
+          </h3>
+          <p className="text-xs text-slate-500 max-w-md">
+            حفاظاً على الخصوصية وسرية بيانات المباني، لا تُعرض الصور التوثيقية أو تفاصيل الفاحصين وسجل الملاحظات للزوار العامين أو لغير مسؤولي هذا المبنى.
+          </p>
+        </div>
       )}
     </div>
   );

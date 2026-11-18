@@ -24,7 +24,7 @@ import {
   FacilityMediaItem,
   MaintenanceTicketInfo,
 } from '../types/hostel';
-import { resolveEvaluationDepartment } from '../config/facilityTemplates';
+import { resolveEvaluationDepartment, isCleaningOrPestTicket } from '../config/facilityTemplates';
 import {
   getDecodedSecurityCode,
   getAdminRawSecurityCode,
@@ -32,6 +32,11 @@ import {
   FIRESTORE_SECRET_DOC,
   FIRESTORE_SECRET_FIELD,
 } from '../utils/securityGate';
+import {
+  getActiveCallerRole,
+  checkActiveLeaderAuth,
+  checkIsAdminUnlocked,
+} from '../utils/sessionStore';
 
 export const EVALUATIONS_COLLECTION = 'evaluations';
 export const LOCAL_STORAGE_KEY = 'hostels_eval_local_cache';
@@ -110,11 +115,24 @@ export function getLocalCache(): Record<string, FixtureEvaluation> {
 }
 
 export function getAllCachedEvaluations(): FixtureEvaluation[] {
-  return Object.values(getLocalCache());
+  return Object.values(getLocalCache()).map((e) => sanitizeEvaluationRecord(e));
 }
 
 export function getLocalCacheCount(): number {
   return Object.keys(getLocalCache()).length;
+}
+
+/**
+ * Strip sensitive internal transport fields (e.g. secretCode) from evaluation objects
+ * before caching in localStorage, state, or exporting to JSON.
+ */
+export function sanitizeEvaluationRecord(data: any): FixtureEvaluation {
+  if (!data || typeof data !== 'object') return data;
+  const copy = { ...data };
+  if ('secretCode' in copy) {
+    delete copy.secretCode;
+  }
+  return copy as FixtureEvaluation;
 }
 
 export function saveToLocalCache(evaluation: FixtureEvaluation): void {
@@ -123,7 +141,7 @@ export function saveToLocalCache(evaluation: FixtureEvaluation): void {
   }
   try {
     const cache = getLocalCache();
-    cache[evaluation.id] = evaluation;
+    cache[evaluation.id] = sanitizeEvaluationRecord(evaluation);
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(cache));
   } catch (err) {
     console.warn('LocalStorage save failed:', err);
@@ -195,14 +213,34 @@ export async function saveEvaluation(
   // Check if caller is authorized with decrypted secret code
   const secretCode = getDecodedSecurityCode();
 
-  // If user is a public visitor (no leader PIN, no maintenance PIN, no admin password), BLOCK write immediately:
+  // If user is public or read-only viewer (no leader PIN, no maintenance PIN, no admin password), BLOCK write immediately:
   if (!secretCode) {
-    console.warn('[HostelsEval] Write blocked: Public users have read-only access.');
+    console.warn('[HostelsEval] Write blocked: Public and read-only KPI viewer users have zero write access.');
     return {
       success: false,
       cloudSynced: false,
       cloudError:
         'عفواً، لا تملك تصريح كتابة. يجب تسجيل الدخول كـ رائد مبنى أو صيانة أو مشرف لحفظ التحديثات.',
+      code: 'permission-denied',
+    };
+  }
+
+  // Enforce Horizontal Isolation for Building Leaders: a Leader can ONLY write to their assigned buildingId!
+  const callerRole = getActiveCallerRole();
+  const leaderAuth = checkActiveLeaderAuth();
+  if (
+    callerRole === 'leader' &&
+    leaderAuth &&
+    !checkIsAdminUnlocked() &&
+    evaluation.buildingId.toUpperCase() !== leaderAuth.buildingId.toUpperCase()
+  ) {
+    console.warn(
+      `[HostelsEval] Cross-building write blocked: leader of ${leaderAuth.buildingId} tried writing ${evaluation.buildingId}`
+    );
+    return {
+      success: false,
+      cloudSynced: false,
+      cloudError: `غير مصرح: صلاحيتك كرائد مبنى محصورة في مبنى ${leaderAuth.buildingId} فقط.`,
       code: 'permission-denied',
     };
   }
@@ -376,6 +414,16 @@ export async function updateMaximoTicketInfo(
     actorName: string;
   }
 ): Promise<CloudSaveResult> {
+  const callerRole = getActiveCallerRole();
+  if (callerRole !== 'admin' && callerRole !== 'maintenance') {
+    return {
+      success: false,
+      cloudSynced: false,
+      cloudError: 'غير مصرح: تسجيل أرقام ومرفقات ماكسمو متاح لحساب الصيانة والمشرف العام فقط.',
+      code: 'permission-denied',
+    };
+  }
+
   const nowIso = new Date().toISOString();
   const prevTicket = evaluation.maintenanceTicket || { status: 'open' };
   const nextTicket: MaintenanceTicketInfo = {
@@ -424,6 +472,29 @@ export async function closeMaintenanceTicket(
     actorName: string;
   }
 ): Promise<CloudSaveResult> {
+  const callerRole = getActiveCallerRole();
+  if (callerRole !== 'admin' && callerRole !== 'maintenance' && callerRole !== 'cleaning') {
+    return {
+      success: false,
+      cloudSynced: false,
+      cloudError: 'غير مصرح: إغلاق البلاغات مخصص لفريق الصيانة أو النظافة والمشرف العام.',
+      code: 'permission-denied',
+    };
+  }
+
+  // Enforce Track Isolation: cleaning cannot close maintenance tickets and vice versa
+  if (callerRole !== 'admin') {
+    const isClnTicket = isCleaningOrPestTicket(evaluation);
+    if ((callerRole === 'cleaning' && !isClnTicket) || (callerRole === 'maintenance' && isClnTicket)) {
+      return {
+        success: false,
+        cloudSynced: false,
+        cloudError: 'غير مصرح: هذا البلاغ يتبع مسار خدمة مختلف عن صلاحية حسابك.',
+        code: 'permission-denied',
+      };
+    }
+  }
+
   const nowIso = new Date().toISOString();
   const prevTicket = evaluation.maintenanceTicket || { status: 'open' };
   const finalMaximoNumber = params.maximoNumber?.trim() || prevTicket.maximoNumber;
@@ -482,6 +553,16 @@ export async function evaluateClosedTicket(
     leaderName: string;
   }
 ): Promise<CloudSaveResult> {
+  const callerRole = getActiveCallerRole();
+  if (callerRole !== 'admin' && callerRole !== 'leader') {
+    return {
+      success: false,
+      cloudSynced: false,
+      cloudError: 'غير مصرح: اعتماد أو رفض إغلاق البلاغات مخصص لرائد المبنى أو المشرف العام فقط.',
+      code: 'permission-denied',
+    };
+  }
+
   const nowIso = new Date().toISOString();
   const prevTicket = evaluation.maintenanceTicket || { status: 'pending_evaluation' };
 
@@ -625,7 +706,7 @@ export function subscribeToBuildingEvaluations(
       (snapshot) => {
         const remoteList: FixtureEvaluation[] = [];
         snapshot.forEach((docSnap) => {
-          const data = docSnap.data() as FixtureEvaluation;
+          const data = sanitizeEvaluationRecord(docSnap.data());
           if (data && data.id && data.buildingId) {
             if (data.isDeleted) {
               removeFromLocalCache(data.id);
@@ -673,7 +754,7 @@ export async function fetchAllEvaluations(): Promise<FixtureEvaluation[]> {
     const remoteList: FixtureEvaluation[] = [];
 
     querySnapshot.forEach((docSnap) => {
-      const data = docSnap.data() as FixtureEvaluation;
+      const data = sanitizeEvaluationRecord(docSnap.data());
       if (
         data &&
         data.id &&
@@ -980,10 +1061,25 @@ export function resolveTimelineIssue(
   resolutionNotes: string,
   resolvedBy: string
 ): void {
+  const role = getActiveCallerRole();
+  if (role === 'public' || role === 'viewer') {
+    console.warn('[HostelsEval] resolveTimelineIssue blocked for read-only/public user.');
+    return;
+  }
+  const leaderAuth = checkActiveLeaderAuth();
+
   try {
     const current = getBuildingTimeline();
     const updated = current.map((item) => {
       if (item.id === historyId) {
+        if (
+          role === 'leader' &&
+          leaderAuth &&
+          !checkIsAdminUnlocked() &&
+          item.buildingId.toUpperCase() !== leaderAuth.buildingId.toUpperCase()
+        ) {
+          return item;
+        }
         return {
           ...item,
           isResolved: true,

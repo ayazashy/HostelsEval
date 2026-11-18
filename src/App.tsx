@@ -35,6 +35,29 @@ import {
 } from './services/firestoreService';
 import { calculateWingHealth } from './utils/healthScore';
 
+function isViewAuthorized(
+  view: AppViewMode,
+  isAdmin: boolean,
+  auth: BuildingLeaderAuth | null,
+  maintenanceAuth: MaintenanceAuth | null
+): boolean {
+  switch (view) {
+    case 'campus':
+    case 'building_detail':
+      return true;
+    case 'leaders_kpi':
+      return isAdmin || maintenanceAuth?.role === 'viewer';
+    case 'leader_portal':
+      return isAdmin || !!auth;
+    case 'maintenance_portal':
+      return isAdmin || (!!maintenanceAuth && maintenanceAuth.role !== 'viewer');
+    case 'admin_panel':
+      return isAdmin;
+    default:
+      return false;
+  }
+}
+
 export function App() {
   const [isAdmin, setIsAdmin] = useState<boolean>(() => isAdminUnlocked());
   const [auth, setAuth] = useState<BuildingLeaderAuth | null>(() => getActiveLeaderAuth());
@@ -44,12 +67,15 @@ export function App() {
   const [featureFlags, setFeatureFlags] = useState<AdminFeatureFlags>(getFeatureFlags());
 
   const [activeView, setActiveView] = useState<AppViewMode>(() => {
+    const adminNow = isAdminUnlocked();
+    const leaderNow = getActiveLeaderAuth();
+    const maintNow = getActiveMaintenanceAuth();
     try {
       const params = new URLSearchParams(window.location.search);
-      if (params.get('evaluate')) {
+      if (params.get('evaluate') && (adminNow || leaderNow)) {
         return 'leader_portal';
       }
-      const saved = localStorage.getItem('hostels_active_view');
+      const saved = localStorage.getItem('hostels_active_view') as AppViewMode | null;
       if (
         saved &&
         [
@@ -59,42 +85,40 @@ export function App() {
           'leader_portal',
           'maintenance_portal',
           'admin_panel',
-        ].includes(saved)
+        ].includes(saved) &&
+        isViewAuthorized(saved, adminNow, leaderNow, maintNow)
       ) {
-        if (saved === 'admin_panel' && !isAdminUnlocked()) return 'campus';
-        const activeMaint = getActiveMaintenanceAuth();
-        if (
-          saved === 'maintenance_portal' &&
-          !isAdminUnlocked() &&
-          (!activeMaint || activeMaint.role === 'viewer')
-        ) {
-          return activeMaint?.role === 'viewer' ? 'leaders_kpi' : 'campus';
-        }
-        return saved as AppViewMode;
+        return saved;
       }
     } catch {}
-    const initialMaint = getActiveMaintenanceAuth();
-    if (initialMaint) {
-      return initialMaint.role === 'viewer' ? 'leaders_kpi' : 'maintenance_portal';
+    if (maintNow) {
+      return maintNow.role === 'viewer' ? 'leaders_kpi' : 'maintenance_portal';
     }
-    if (getActiveLeaderAuth()) return 'leader_portal';
-    if (isAdminUnlocked()) return 'admin_panel';
+    if (leaderNow) return 'leader_portal';
+    if (adminNow) return 'admin_panel';
     return 'campus';
   });
 
   const [selectedBuildingId, setSelectedBuildingId] = useState<string>(() => {
     try {
+      const adminNow = isAdminUnlocked();
+      const activeAuth = getActiveLeaderAuth();
+      if (activeAuth?.buildingId && !adminNow) {
+        return activeAuth.buildingId;
+      }
+
       const params = new URLSearchParams(window.location.search);
       const evalBld = params.get('evaluate')?.toUpperCase();
       if (evalBld && /^B\d{2}$/.test(evalBld)) return evalBld;
 
-      const activeAuth = getActiveLeaderAuth();
       if (activeAuth?.buildingId) return activeAuth.buildingId;
       const saved = localStorage.getItem('hostels_selected_building_id');
       if (saved) return saved;
     } catch {}
     return 'B14';
   });
+
+  const [auditTarget, setAuditTarget] = useState<{ wingId?: number; floor?: number }>({});
 
   const [buildings, setBuildings] = useState<BuildingInfo[]>(DEFAULT_BUILDINGS);
   const [allEvaluations, setAllEvaluations] = useState<FixtureEvaluation[]>([]);
@@ -111,7 +135,16 @@ export function App() {
     'leader'
   );
 
-  const handleNavigate = (view: AppViewMode) => {
+  const handleNavigate = (view: AppViewMode, forceAuthorized = false) => {
+    if (!forceAuthorized && !isViewAuthorized(view, isAdmin, auth, maintenanceAuth)) {
+      const fallbackView: AppViewMode =
+        maintenanceAuth?.role === 'viewer' ? 'leaders_kpi' : 'campus';
+      setActiveView(fallbackView);
+      try {
+        localStorage.setItem('hostels_active_view', fallbackView);
+      } catch {}
+      return;
+    }
     setActiveView(view);
     try {
       localStorage.setItem('hostels_active_view', view);
@@ -208,33 +241,40 @@ export function App() {
 
   const handleAdminUnlocked = () => {
     setIsAdmin(true);
+    setAuth(null);
+    setMaintenanceAuth(null);
     setShowLoginModal(false);
-    handleNavigate('admin_panel');
+    handleNavigate('admin_panel', true);
   };
 
   const handleLeaderLogin = (leaderAuth: BuildingLeaderAuth) => {
+    setIsAdmin(false);
     setAuth(leaderAuth);
+    setMaintenanceAuth(null);
     setShowLoginModal(false);
     handleSelectBuilding(leaderAuth.buildingId);
-    handleNavigate('leader_portal');
+    handleNavigate('leader_portal', true);
   };
 
   const handleMaintenanceLogin = (mAuth: MaintenanceAuth) => {
+    setIsAdmin(false);
+    setAuth(null);
     setMaintenanceAuth(mAuth);
     setShowLoginModal(false);
-    handleNavigate(mAuth.role === 'viewer' ? 'leaders_kpi' : 'maintenance_portal');
+    handleNavigate(mAuth.role === 'viewer' ? 'leaders_kpi' : 'maintenance_portal', true);
   };
 
   const handleImpersonate = (impersonatedAuth: BuildingLeaderAuth) => {
     setAuth(impersonatedAuth);
+    setMaintenanceAuth(null);
     handleSelectBuilding(impersonatedAuth.buildingId);
-    handleNavigate('leader_portal');
+    handleNavigate('leader_portal', true);
   };
 
   const handleExitImpersonation = () => {
     exitImpersonation();
     setAuth(null);
-    handleNavigate('admin_panel');
+    handleNavigate('admin_panel', true);
   };
 
   const handleLockSession = () => {
@@ -242,7 +282,8 @@ export function App() {
     setIsAdmin(false);
     setAuth(null);
     setMaintenanceAuth(null);
-    handleNavigate('campus');
+    setShowReportModal(false);
+    handleNavigate('campus', true);
   };
 
   const handleUpdateFeatureFlags = (newFlags: AdminFeatureFlags) => {
@@ -271,28 +312,60 @@ export function App() {
 
   const currentBuilding = buildings.find((b) => b.id === selectedBuildingId) || buildings[0];
   const currentBuildingEvals = allEvaluations.filter((e) => e.buildingId === selectedBuildingId);
-  const pendingEvalCount = currentBuildingEvals.filter(
-    (e) => !e.isDeleted && e.maintenanceTicket?.status === 'pending_evaluation'
-  ).length;
+
+  const isViewerRole = maintenanceAuth?.role === 'viewer' && !isAdmin;
+  const isOwnLeaderBuilding =
+    !!auth && auth.buildingId.toUpperCase() === currentBuilding.id.toUpperCase();
+  const canEditCurrentBuilding = isAdmin || isOwnLeaderBuilding;
+  const canViewSensitiveDetails = isAdmin || isViewerRole || isOwnLeaderBuilding;
+  const canOpenOfficialReport =
+    featureFlags.enableOfficialReports && (isAdmin || isViewerRole || !!auth);
+
+  const pendingEvalCount =
+    isAdmin || auth
+      ? allEvaluations.filter(
+          (e) =>
+            !e.isDeleted &&
+            e.buildingId === (auth?.buildingId || selectedBuildingId) &&
+            e.maintenanceTicket?.status === 'pending_evaluation'
+        ).length
+      : 0;
+
+  // Enforce activeView validity synchronously so unauthorized screens can NEVER render
+  const effectiveView: AppViewMode = isViewAuthorized(
+    activeView,
+    isAdmin,
+    auth,
+    maintenanceAuth
+  )
+    ? activeView
+    : isViewerRole
+    ? 'leaders_kpi'
+    : 'campus';
+
+  const leaderPortalBuildingId =
+    !isAdmin && auth ? auth.buildingId : selectedBuildingId;
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col font-sans">
       <Navbar
-        activeView={activeView}
+        activeView={effectiveView}
         isAdmin={isAdmin}
         auth={auth}
         maintenanceAuth={maintenanceAuth}
         featureFlags={featureFlags}
         pendingEvaluationCount={pendingEvalCount}
         onNavigate={handleNavigate}
-        onOpenReportModal={() => setShowReportModal(true)}
+        onOpenReportModal={() => {
+          if (canOpenOfficialReport) setShowReportModal(true);
+        }}
         onOpenLogin={handleOpenLogin}
         onExitImpersonation={handleExitImpersonation}
         onLockSession={handleLockSession}
       />
 
       <main className="flex-1 p-3 pb-24 sm:p-6 sm:pb-24 md:p-8 md:pb-8">
-        {activeView === 'campus' && (
+        {effectiveView === 'campus' && (
           <CampusOverview
             buildings={buildings}
             allEvaluations={allEvaluations}
@@ -300,17 +373,20 @@ export function App() {
               handleSelectBuilding(bId);
               handleNavigate('building_detail');
             }}
-            onOpenReportModal={() => setShowReportModal(true)}
+            onOpenReportModal={() => {
+              if (canOpenOfficialReport) setShowReportModal(true);
+            }}
             onOpenLogin={() => handleOpenLogin('leader')}
             isAuthenticated={isAdmin || !!auth || !!maintenanceAuth}
+            canOpenReport={canOpenOfficialReport}
           />
         )}
 
-        {activeView === 'leaders_kpi' && (
+        {effectiveView === 'leaders_kpi' && (isAdmin || isViewerRole) && (
           <LeadersKPIDashboard
             buildings={buildings}
             allEvaluations={allEvaluations}
-            isReadOnlyViewer={maintenanceAuth?.role === 'viewer' && !isAdmin}
+            isReadOnlyViewer={isViewerRole}
             viewerName={maintenanceAuth?.technicianName}
             onSelectBuilding={(bId) => {
               handleSelectBuilding(bId);
@@ -319,56 +395,69 @@ export function App() {
           />
         )}
 
-        {activeView === 'building_detail' && (
+        {effectiveView === 'building_detail' && (
           <BuildingDetail
             building={currentBuilding}
             evaluations={currentBuildingEvals}
             onBack={() => handleNavigate('campus')}
-            onOpenAudit={() => {
-              if (maintenanceAuth?.role === 'viewer' && !isAdmin && !auth) {
+            onOpenAudit={(wingId, floor) => {
+              if (canEditCurrentBuilding) {
+                setAuditTarget({ wingId, floor });
                 handleNavigate('leader_portal');
-              } else if (isAdmin || auth) {
-                handleNavigate('leader_portal');
-              } else {
+              } else if (!isViewerRole) {
                 handleOpenLogin('leader');
               }
             }}
-            onOpenReport={() => setShowReportModal(true)}
-            isAuthenticated={isAdmin || !!auth}
-            onOpenLogin={() => handleOpenLogin('leader')}
+            onOpenReport={() => {
+              if (canOpenOfficialReport) setShowReportModal(true);
+            }}
+            isAuthenticated={canEditCurrentBuilding}
+            canViewSensitiveDetails={canViewSensitiveDetails}
+            canOpenReport={canOpenOfficialReport && (isAdmin || isViewerRole || isOwnLeaderBuilding)}
+            canResolveTimeline={canEditCurrentBuilding}
+            isViewerOnly={isViewerRole}
+            currentUserName={
+              auth?.leaderName ||
+              (isAdmin ? 'المشرف العام' : maintenanceAuth?.technicianName || 'إدارة الإسكان')
+            }
+            onOpenLogin={!isViewerRole ? () => handleOpenLogin('leader') : undefined}
           />
         )}
 
-        {activeView === 'leader_portal' && (
+        {effectiveView === 'leader_portal' && (isAdmin || !!auth) && (
           <LeaderPortal
             buildings={buildings}
-            activeBuildingId={selectedBuildingId}
+            activeBuildingId={leaderPortalBuildingId}
             evaluations={allEvaluations}
-            inspectorName={
-              auth?.leaderName || (isAdmin ? 'المشرف العام' : 'زائر عام (معاينة فقط)')
-            }
-            onChangeBuilding={handleSelectBuilding}
+            inspectorName={auth?.leaderName || 'المشرف العام'}
+            isAdmin={isAdmin}
+            initialWingId={auditTarget.wingId}
+            initialFloor={auditTarget.floor}
+            onChangeBuilding={(bId) => {
+              if (isAdmin) handleSelectBuilding(bId);
+            }}
             onRefreshEvaluations={loadAllEvaluations}
-            isReadOnly={!isAdmin && !auth}
+            isReadOnly={false}
             onOpenLogin={() => handleOpenLogin('leader')}
           />
         )}
 
-        {activeView === 'maintenance_portal' && (
-          <MaintenancePortal
-            buildings={buildings}
-            allEvaluations={allEvaluations}
-            technicianName={
-              maintenanceAuth?.technicianName ||
-              (isAdmin ? 'المشرف العام (إدارة الصيانة والخدمات)' : 'فريق الصيانة')
-            }
-            portalRole={maintenanceAuth?.role === 'cleaning' ? 'cleaning' : 'maintenance'}
-            isAdmin={isAdmin}
-            onRefreshEvaluations={loadAllEvaluations}
-          />
-        )}
+        {effectiveView === 'maintenance_portal' &&
+          (isAdmin || (!!maintenanceAuth && maintenanceAuth.role !== 'viewer')) && (
+            <MaintenancePortal
+              buildings={buildings}
+              allEvaluations={allEvaluations}
+              technicianName={
+                maintenanceAuth?.technicianName ||
+                (isAdmin ? 'المشرف العام (إدارة الصيانة والخدمات)' : 'فريق الصيانة')
+              }
+              portalRole={maintenanceAuth?.role === 'cleaning' ? 'cleaning' : 'maintenance'}
+              isAdmin={isAdmin}
+              onRefreshEvaluations={loadAllEvaluations}
+            />
+          )}
 
-        {activeView === 'admin_panel' && isAdmin && (
+        {effectiveView === 'admin_panel' && isAdmin && (
           <AdminPanel
             featureFlags={featureFlags}
             onUpdateFeatureFlags={handleUpdateFeatureFlags}
@@ -380,10 +469,11 @@ export function App() {
         )}
       </main>
 
-      {showReportModal && (
+      {showReportModal && canOpenOfficialReport && (
         <OfficialReportModal
           buildings={buildings}
           allEvaluations={allEvaluations}
+          scopedBuildingId={!isAdmin && auth ? auth.buildingId : undefined}
           onClose={() => setShowReportModal(false)}
         />
       )}

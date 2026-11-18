@@ -31,6 +31,7 @@ interface CampusOverviewProps {
   onOpenReportModal: () => void;
   onOpenLogin?: () => void;
   isAuthenticated?: boolean;
+  canOpenReport?: boolean;
 }
 
 export const CampusOverview: React.FC<CampusOverviewProps> = ({
@@ -40,6 +41,7 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
   onOpenReportModal,
   onOpenLogin,
   isAuthenticated = false,
+  canOpenReport = false,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterDefect, setFilterDefect] = useState<string>('all');
@@ -135,13 +137,15 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={onOpenReportModal}
-              className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition flex items-center gap-1.5 border border-slate-200 shadow-sm"
-            >
-              <FileText className="w-4 h-4 text-blue-600" />
-              <span>التقرير الشامل</span>
-            </button>
+            {canOpenReport && (
+              <button
+                onClick={onOpenReportModal}
+                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition flex items-center gap-1.5 border border-slate-200 shadow-sm"
+              >
+                <FileText className="w-4 h-4 text-blue-600" />
+                <span>التقرير الشامل</span>
+              </button>
+            )}
 
             {!isAuthenticated && onOpenLogin && (
               <button

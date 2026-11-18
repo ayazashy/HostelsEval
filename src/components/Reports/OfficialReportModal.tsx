@@ -11,17 +11,26 @@ import { Printer, X, ShieldCheck, AlertTriangle, Maximize2, FileText } from 'luc
 interface OfficialReportModalProps {
   buildings: BuildingInfo[];
   allEvaluations: FixtureEvaluation[];
+  scopedBuildingId?: string;
   onClose: () => void;
 }
 
 export const OfficialReportModal: React.FC<OfficialReportModalProps> = ({
   buildings,
   allEvaluations,
+  scopedBuildingId,
   onClose,
 }) => {
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
 
-  const stats = computeCampusStats(buildings, allEvaluations);
+  const visibleBuildings = scopedBuildingId
+    ? buildings.filter((b) => b.id.toUpperCase() === scopedBuildingId.toUpperCase())
+    : buildings;
+  const visibleEvaluations = scopedBuildingId
+    ? allEvaluations.filter((e) => e.buildingId?.toUpperCase() === scopedBuildingId.toUpperCase())
+    : allEvaluations;
+
+  const stats = computeCampusStats(visibleBuildings, visibleEvaluations);
   const now = new Date();
   const dateStr = now.toLocaleDateString('ar-SA', {
     year: 'numeric',
@@ -33,11 +42,11 @@ export const OfficialReportModal: React.FC<OfficialReportModalProps> = ({
     window.print();
   };
 
-  const worstBuildings = [...buildings]
-    .sort((a, b) => (a.healthScore || 100) - (b.healthScore || 100))
+  const worstBuildings = [...visibleBuildings]
+    .sort((a, b) => (a.healthScore ?? 999) - (b.healthScore ?? 999))
     .slice(0, 8);
 
-  const criticalItems = allEvaluations
+  const criticalItems = visibleEvaluations
     .filter((e) => e.status === 'broken' || e.defects.includes('leak'))
     .slice(0, 12);
 
@@ -166,13 +175,15 @@ export const OfficialReportModal: React.FC<OfficialReportModalProps> = ({
                           {b.nameAr} ({b.id})
                         </td>
                         <td className="p-2.5 font-mono font-bold text-rose-600">
-                          %{b.healthScore || 100}
+                          {b.healthScore !== null && b.healthScore !== undefined
+                            ? `%${b.healthScore}`
+                            : 'غير مفحوص'}
                         </td>
                         <td className="p-2.5 text-rose-600 font-bold">
-                          {allEvaluations.filter((e) => e.buildingId === b.id && e.defects.includes('leak')).length}
+                          {visibleEvaluations.filter((e) => e.buildingId === b.id && e.defects.includes('leak')).length}
                         </td>
                         <td className="p-2.5 text-amber-600 font-bold">
-                          {allEvaluations.filter((e) => e.buildingId === b.id && e.status === 'broken').length}
+                          {visibleEvaluations.filter((e) => e.buildingId === b.id && e.status === 'broken').length}
                         </td>
                         <td className="p-2.5 text-[11px] text-slate-600">
                           صيانة شبكة المياه واستبدال الحنفيات والسيفونات

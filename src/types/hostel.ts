@@ -118,6 +118,14 @@ export interface MaintenanceAuth {
   token: string;
 }
 
+export type ActiveUserRole =
+  | 'admin'
+  | 'leader'
+  | 'maintenance'
+  | 'cleaning'
+  | 'viewer'
+  | 'public';
+
 export interface FixtureEvaluation {
   id: string; // e.g. B14-W2-F3-BTH-SNK-01
   buildingId: string; // e.g. 'B14'
@@ -198,7 +206,7 @@ export interface CampusMapConfig {
 export interface WingSummary {
   wingId: number;
   wingNameAr: string;
-  healthScore: number;
+  healthScore: number | null;
   totalFixtures: number;
   operationalCount: number;
   warningCount: number;

@@ -82,13 +82,17 @@ export function computeCampusStats(
   buildings: BuildingInfo[],
   allEvaluations: FixtureEvaluation[]
 ): CampusStats {
-  const auditedBuildingsSet = new Set(allEvaluations.map((e) => e.buildingId));
-  
+  const validIds = new Set(buildings.map((b) => b.id.toUpperCase()));
+  const validEvals = allEvaluations.filter(
+    (e) => e && !e.isDeleted && validIds.has(e.buildingId?.toUpperCase())
+  );
+  const auditedBuildingsSet = new Set(validEvals.map((e) => e.buildingId.toUpperCase()));
+
   let leaksCount = 0;
   let criticalToilets = 0;
   let brokenShowers = 0;
 
-  allEvaluations.forEach((item) => {
+  validEvals.forEach((item) => {
     if (item.defects.includes('leak')) leaksCount += 1;
     if (item.fixtureTypeCode === 'TOI' && item.status === 'broken') criticalToilets += 1;
     if (item.fixtureTypeCode === 'SHW' && item.status === 'broken') brokenShowers += 1;
@@ -97,7 +101,7 @@ export function computeCampusStats(
   const inspectedBuildings = buildings.filter(
     (b) => b.healthScore !== null && b.healthScore !== undefined
   );
-  const uninspectedCount = buildings.length - auditedBuildingsSet.size;
+  const uninspectedCount = Math.max(0, buildings.length - auditedBuildingsSet.size);
 
   const averageHealth =
     inspectedBuildings.length > 0
@@ -111,7 +115,7 @@ export function computeCampusStats(
     totalBuildings: buildings.length,
     auditedBuildings: auditedBuildingsSet.size,
     uninspectedBuildings: uninspectedCount,
-    totalFixturesCount: allEvaluations.length,
+    totalFixturesCount: validEvals.length,
     totalLeaksCount: leaksCount,
     totalCriticalToilets: criticalToilets,
     totalBrokenShowers: brokenShowers,
@@ -119,14 +123,14 @@ export function computeCampusStats(
   };
 }
 
-// Summarize a specific Wing's condition
+// Summarize a specific Wing's condition (returns healthScore: null when uninspected)
 export function summarizeWing(
   wingId: number,
   wingNameAr: string,
   evaluations: FixtureEvaluation[]
 ): WingSummary {
-  const healthScore = calculateWingHealth(evaluations) ?? 100;
-  
+  const healthScore = calculateWingHealth(evaluations);
+
   return {
     wingId,
     wingNameAr,

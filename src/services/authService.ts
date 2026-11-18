@@ -136,7 +136,9 @@ export async function unlockAdminWorkspace(passwordInput: string): Promise<{
     };
   }
 
-  // Master password is confirmed authentic: initialize in-memory and persistent session
+  // Master password is confirmed authentic: clear conflicting sessions and initialize admin session
+  clearLeaderSession();
+  clearMaintenanceSession();
   setAdminSession(result.vault);
 
   logAuditEvent({
@@ -187,6 +189,7 @@ export function lockAdminWorkspace(): void {
   clearMaintenanceSession();
   try {
     localStorage.removeItem('hostels_active_view');
+    localStorage.removeItem('hostels_selected_building_id');
   } catch (err) {
     console.warn('Failed to clear sessions:', err);
   }
@@ -240,6 +243,9 @@ export async function loginMaintenanceWithCode(
     token: `${role}_${Date.now()}`,
   };
 
+  // Single active role enforcement: clear conflicting Admin/Leader sessions
+  clearAdminSession();
+  clearLeaderSession();
   setMaintenanceSession(authData);
 
   logAuditEvent({
@@ -309,6 +315,9 @@ export async function loginBuildingLeaderWithCode(
     token: `lead_${Date.now()}_${account.buildingId}`,
   };
 
+  // Single active role enforcement: clear conflicting Admin/Maintenance sessions
+  clearAdminSession();
+  clearMaintenanceSession();
   setLeaderSession(authData);
 
   logAuditEvent({

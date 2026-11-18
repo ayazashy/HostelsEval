@@ -237,7 +237,10 @@ export const LeadersKPIDashboard: React.FC<LeadersKPIDashboardProps> = ({
 
         for (const zId of zones) {
           for (const cat of activeCategories) {
-            const templates = cat.wingTemplates[zId] || [];
+            const templates =
+              cat.wingTemplates[zId] !== undefined
+                ? cat.wingTemplates[zId]
+                : cat.wingTemplates[1] || [];
             for (const tmpl of templates) {
               floorRequired += tmpl.count;
             }

@@ -58,6 +58,15 @@ export const Navbar: React.FC<NavbarProps> = ({
   onLockSession,
 }) => {
   const isViewerOnly = maintenanceAuth?.role === 'viewer' && !isAdmin;
+  const isTechStaff = !!maintenanceAuth && maintenanceAuth.role !== 'viewer' && !isAdmin;
+  const isLeaderStaff = !!auth && !isAdmin;
+  const isPublicGuest = !isAdmin && !auth && !maintenanceAuth;
+
+  const canViewKPI = isAdmin || isViewerOnly;
+  const showLeaderTab = isAdmin || isLeaderStaff || isPublicGuest;
+  const showMaintenanceTab = isAdmin || isTechStaff || isPublicGuest;
+  const canOpenOfficialReport =
+    featureFlags.enableOfficialReports && (isAdmin || isViewerOnly || isLeaderStaff);
 
   return (
     <>
@@ -117,74 +126,76 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span>مجمع المباني (34)</span>
             </button>
 
-            <button
-              onClick={() => onNavigate('leaders_kpi')}
-              className={`px-3 py-1.5 rounded-xl font-bold transition flex items-center gap-1.5 ${
-                activeView === 'leaders_kpi'
-                  ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-              }`}
-            >
-              <BarChart3 className="w-3.5 h-3.5" />
-              <span>مؤشرات أداء الرواد (KPI)</span>
-            </button>
-
-            {!isViewerOnly && (
-              <>
-                <button
-                  onClick={() => {
-                    if (isAdmin || auth) {
-                      onNavigate('leader_portal');
-                    } else {
-                      onOpenLogin?.('leader');
-                    }
-                  }}
-                  className={`px-3 py-1.5 rounded-xl font-bold transition flex items-center gap-1.5 relative ${
-                    activeView === 'leader_portal'
-                      ? 'bg-blue-600 text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                  }`}
-                >
-                  <ClipboardCheck className="w-3.5 h-3.5" />
-                  <span>فحص رائد المبنى</span>
-                  {pendingEvaluationCount > 0 && (
-                    <span className="px-1.5 py-0.2 bg-purple-600 text-white text-[10px] rounded-full animate-pulse">
-                      {pendingEvaluationCount}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  onClick={() => {
-                    if (isAdmin || (maintenanceAuth && maintenanceAuth.role !== 'viewer')) {
-                      onNavigate('maintenance_portal');
-                    } else {
-                      onOpenLogin?.('maintenance');
-                    }
-                  }}
-                  className={`px-3 py-1.5 rounded-xl font-bold transition flex items-center gap-1.5 ${
-                    activeView === 'maintenance_portal'
-                      ? 'bg-emerald-600 text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                  }`}
-                >
-                  <Wrench className="w-3.5 h-3.5" />
-                  <span>
-                    {maintenanceAuth?.role === 'cleaning'
-                      ? 'بوابة النظافة والآفات'
-                      : 'بوابة الصيانة والخدمات'}
-                  </span>
-                </button>
-              </>
+            {canViewKPI && (
+              <button
+                onClick={() => onNavigate('leaders_kpi')}
+                className={`px-3 py-1.5 rounded-xl font-bold transition flex items-center gap-1.5 ${
+                  activeView === 'leaders_kpi'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                }`}
+              >
+                <BarChart3 className="w-3.5 h-3.5" />
+                <span>مؤشرات أداء الرواد (KPI)</span>
+              </button>
             )}
 
-            {featureFlags.enableOfficialReports && (
+            {showLeaderTab && (
+              <button
+                onClick={() => {
+                  if (isAdmin || auth) {
+                    onNavigate('leader_portal');
+                  } else {
+                    onOpenLogin?.('leader');
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-xl font-bold transition flex items-center gap-1.5 relative ${
+                  activeView === 'leader_portal'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                }`}
+              >
+                <ClipboardCheck className="w-3.5 h-3.5" />
+                <span>فحص رائد المبنى</span>
+                {pendingEvaluationCount > 0 && (isAdmin || auth) && (
+                  <span className="px-1.5 py-0.2 bg-purple-600 text-white text-[10px] rounded-full animate-pulse">
+                    {pendingEvaluationCount}
+                  </span>
+                )}
+              </button>
+            )}
+
+            {showMaintenanceTab && (
+              <button
+                onClick={() => {
+                  if (isAdmin || (maintenanceAuth && maintenanceAuth.role !== 'viewer')) {
+                    onNavigate('maintenance_portal');
+                  } else {
+                    onOpenLogin?.('maintenance');
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-xl font-bold transition flex items-center gap-1.5 ${
+                  activeView === 'maintenance_portal'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                }`}
+              >
+                <Wrench className="w-3.5 h-3.5" />
+                <span>
+                  {maintenanceAuth?.role === 'cleaning'
+                    ? 'بوابة النظافة والآفات'
+                    : 'بوابة الصيانة والخدمات'}
+                </span>
+              </button>
+            )}
+
+            {canOpenOfficialReport && (
               <button
                 onClick={onOpenReportModal}
                 className="px-3 py-1.5 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-bold transition flex items-center gap-1.5"
               >
                 <FileText className="w-3.5 h-3.5" />
-                <span>التقرير الرسمي</span>
+                <span>{isLeaderStaff ? 'تقرير مبناك' : 'التقرير الرسمي'}</span>
               </button>
             )}
 
@@ -288,66 +299,68 @@ export const Navbar: React.FC<NavbarProps> = ({
           <span className="truncate max-w-full">المباني</span>
         </button>
 
-        <button
-          type="button"
-          onClick={() => onNavigate('leaders_kpi')}
-          className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold transition ${
-            activeView === 'leaders_kpi'
-              ? 'text-indigo-700 bg-indigo-50/80'
-              : 'text-slate-500'
-          }`}
-        >
-          <BarChart3 className="w-4 h-4 mb-0.5 shrink-0" />
-          <span className="truncate max-w-full">المؤشرات</span>
-        </button>
+        {canViewKPI && (
+          <button
+            type="button"
+            onClick={() => onNavigate('leaders_kpi')}
+            className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold transition ${
+              activeView === 'leaders_kpi'
+                ? 'text-indigo-700 bg-indigo-50/80'
+                : 'text-slate-500'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4 mb-0.5 shrink-0" />
+            <span className="truncate max-w-full">المؤشرات</span>
+          </button>
+        )}
 
-        {!isViewerOnly && (
-          <>
-            <button
-              type="button"
-              onClick={() => {
-                if (isAdmin || auth) {
-                  onNavigate('leader_portal');
-                } else {
-                  onOpenLogin?.('leader');
-                }
-              }}
-              className={`relative flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold transition ${
-                activeView === 'leader_portal'
-                  ? 'text-blue-600 bg-blue-50/80'
-                  : 'text-slate-500'
-              }`}
-            >
-              <ClipboardCheck className="w-4 h-4 mb-0.5 shrink-0" />
-              <span className="truncate max-w-full">رائد المبنى</span>
-              {pendingEvaluationCount > 0 && (
-                <span className="absolute top-1 left-2 w-4 h-4 rounded-full bg-purple-600 text-white text-[9px] flex items-center justify-center">
-                  {pendingEvaluationCount}
-                </span>
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                if (isAdmin || (maintenanceAuth && maintenanceAuth.role !== 'viewer')) {
-                  onNavigate('maintenance_portal');
-                } else {
-                  onOpenLogin?.('maintenance');
-                }
-              }}
-              className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold transition ${
-                activeView === 'maintenance_portal'
-                  ? 'text-emerald-700 bg-emerald-50/80'
-                  : 'text-slate-500'
-              }`}
-            >
-              <Wrench className="w-4 h-4 mb-0.5 shrink-0" />
-              <span className="truncate max-w-full">
-                {maintenanceAuth?.role === 'cleaning' ? 'النظافة' : 'الصيانة'}
+        {showLeaderTab && (
+          <button
+            type="button"
+            onClick={() => {
+              if (isAdmin || auth) {
+                onNavigate('leader_portal');
+              } else {
+                onOpenLogin?.('leader');
+              }
+            }}
+            className={`relative flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold transition ${
+              activeView === 'leader_portal'
+                ? 'text-blue-600 bg-blue-50/80'
+                : 'text-slate-500'
+            }`}
+          >
+            <ClipboardCheck className="w-4 h-4 mb-0.5 shrink-0" />
+            <span className="truncate max-w-full">رائد المبنى</span>
+            {pendingEvaluationCount > 0 && (isAdmin || auth) && (
+              <span className="absolute top-1 left-2 w-4 h-4 rounded-full bg-purple-600 text-white text-[9px] flex items-center justify-center">
+                {pendingEvaluationCount}
               </span>
-            </button>
-          </>
+            )}
+          </button>
+        )}
+
+        {showMaintenanceTab && (
+          <button
+            type="button"
+            onClick={() => {
+              if (isAdmin || (maintenanceAuth && maintenanceAuth.role !== 'viewer')) {
+                onNavigate('maintenance_portal');
+              } else {
+                onOpenLogin?.('maintenance');
+              }
+            }}
+            className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold transition ${
+              activeView === 'maintenance_portal'
+                ? 'text-emerald-700 bg-emerald-50/80'
+                : 'text-slate-500'
+            }`}
+          >
+            <Wrench className="w-4 h-4 mb-0.5 shrink-0" />
+            <span className="truncate max-w-full">
+              {maintenanceAuth?.role === 'cleaning' ? 'النظافة' : 'الصيانة'}
+            </span>
+          </button>
         )}
 
         {isAdmin ? (
@@ -363,7 +376,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <Sliders className="w-4 h-4 mb-0.5 shrink-0" />
             <span className="truncate max-w-full">المشرف</span>
           </button>
-        ) : (
+        ) : canOpenOfficialReport ? (
           <button
             type="button"
             onClick={onOpenReportModal}
@@ -372,7 +385,16 @@ export const Navbar: React.FC<NavbarProps> = ({
             <FileText className="w-4 h-4 mb-0.5 shrink-0" />
             <span className="truncate max-w-full">التقرير</span>
           </button>
-        )}
+        ) : isPublicGuest ? (
+          <button
+            type="button"
+            onClick={() => onOpenLogin?.('leader')}
+            className="flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold text-blue-600"
+          >
+            <LogIn className="w-4 h-4 mb-0.5 shrink-0" />
+            <span className="truncate max-w-full">دخول</span>
+          </button>
+        ) : null}
       </nav>
     </>
   );

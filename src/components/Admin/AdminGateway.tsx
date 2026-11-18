@@ -319,7 +319,7 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
                     staffTrack === 'cleaning'
                       ? 'أدخل كود دخول النظافة المعتمد من المشرف...'
                       : staffTrack === 'viewer'
-                      ? 'أدخل كود متابعة المؤشرات (VW-...)...'
+                      ? 'أدخل كود متابعة الأداء والمؤشرات المعتمد من المشرف...'
                       : 'أدخل كود دخول الصيانة المعتمد من المشرف...'
                   }
                   required

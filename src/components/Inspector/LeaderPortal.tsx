@@ -42,6 +42,9 @@ interface LeaderPortalProps {
   activeBuildingId: string;
   evaluations: FixtureEvaluation[];
   inspectorName: string;
+  isAdmin?: boolean;
+  initialWingId?: number | null;
+  initialFloor?: number | null;
   onChangeBuilding: (buildingId: string) => void;
   onRefreshEvaluations: () => void;
   isReadOnly?: boolean;
@@ -53,6 +56,9 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
   activeBuildingId,
   evaluations,
   inspectorName,
+  isAdmin = false,
+  initialWingId = null,
+  initialFloor = null,
   onChangeBuilding,
   onRefreshEvaluations,
   isReadOnly = false,
@@ -61,8 +67,8 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
   const currentBuilding = buildings.find((b) => b.id === activeBuildingId) || buildings[0];
 
   const [portalTab, setPortalTab] = useState<'form' | 'timeline'>('form');
-  const [selectedFloor, setSelectedFloor] = useState<number>(1);
-  const [selectedWing, setSelectedWing] = useState<number>(1);
+  const [selectedFloor, setSelectedFloor] = useState<number>(() => initialFloor || 1);
+  const [selectedWing, setSelectedWing] = useState<number>(() => initialWingId || 1);
   const [selectedCategoryCode, setSelectedCategoryCode] = useState<string>('BTH');
   const [filterStatus, setFilterStatus] = useState<'all' | 'issues'>('all');
   const [categories, setCategories] = useState(() => loadActiveFacilityCategories());
@@ -331,19 +337,25 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
           </div>
         </div>
 
-        {/* Building Selector + Mode Switcher */}
+        {/* Building Selector (Admin Only) or Locked Building Badge + Mode Switcher */}
         <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
-          <select
-            value={activeBuildingId}
-            onChange={(e) => onChangeBuilding(e.target.value)}
-            className="bg-slate-100 border border-slate-300 text-slate-900 text-xs rounded-xl px-3 py-2 font-bold cursor-pointer"
-          >
-            {buildings.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.nameAr} ({b.id})
-              </option>
-            ))}
-          </select>
+          {isAdmin ? (
+            <select
+              value={activeBuildingId}
+              onChange={(e) => onChangeBuilding(e.target.value)}
+              className="bg-slate-100 border border-slate-300 text-slate-900 text-xs rounded-xl px-3 py-2 font-bold cursor-pointer"
+            >
+              {buildings.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.nameAr} ({b.id})
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="bg-blue-50 border border-blue-200 text-blue-900 text-xs rounded-xl px-3 py-2 font-bold">
+              صلاحية حصرية: {currentBuilding.nameAr} ({currentBuilding.id})
+            </span>
+          )}
 
           <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
             <button
@@ -587,6 +599,7 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
                     existingEvaluation={existing}
                     inspectorName={inspectorName}
                     onSave={handleSaveEvaluation}
+                    onRefresh={onRefreshEvaluations}
                     isReadOnly={isReadOnly}
                     isLockedByEvaluationGate={isLockedByGate}
                     onOpenGateModal={() => setShowGateModal(true)}

@@ -56,6 +56,7 @@ interface FixtureCardProps {
   existingEvaluation?: FixtureEvaluation;
   inspectorName: string;
   onSave: (evaluation: FixtureEvaluation) => Promise<CloudSaveResult>;
+  onRefresh?: () => void;
   isReadOnly?: boolean;
   isLockedByEvaluationGate?: boolean;
   onOpenGateModal?: () => void;
@@ -72,6 +73,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
   existingEvaluation,
   inspectorName,
   onSave,
+  onRefresh,
   isReadOnly = false,
   isLockedByEvaluationGate = false,
   onOpenGateModal,
@@ -404,11 +406,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
 
       setChatText('');
       setChatPhotoBase64(undefined);
-      // Trigger parent refresh
-      await onSave({
-        ...baseEval,
-        updatedAt: new Date().toISOString(),
-      });
+      onRefresh?.();
     } finally {
       setIsSendingChat(false);
     }
@@ -425,7 +423,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
         feedback: 'تمت معاينة المرفق واعتماد الإصلاح من داخل محادثة المرفق ✅',
         leaderName: inspectorName,
       });
-      window.location.reload();
+      onRefresh?.();
     } finally {
       setIsSendingChat(false);
     }
@@ -447,7 +445,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
       });
       setShowRejectInput(false);
       setQuickRejectReason('');
-      window.location.reload();
+      onRefresh?.();
     } finally {
       setIsSendingChat(false);
     }

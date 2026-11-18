@@ -3,7 +3,7 @@
 // Zero Circular Dependencies • Isolated State Management
 // ============================================================================
 
-import { BuildingLeaderAuth, MaintenanceAuth } from '../types/hostel';
+import { ActiveUserRole, BuildingLeaderAuth, MaintenanceAuth } from '../types/hostel';
 import { DecryptedAdminVault } from './cryptoVault';
 
 export const ADMIN_STORAGE_SESSION_KEY = 'hostels_admin_active_session_v2';
@@ -156,15 +156,26 @@ export function clearMaintenanceSession(): void {
 }
 
 /**
+ * Resolve the primary effective role of the currently signed-in caller.
+ */
+export function getActiveCallerRole(): ActiveUserRole {
+  if (checkIsAdminUnlocked()) return 'admin';
+  const leader = checkActiveLeaderAuth();
+  if (leader) return 'leader';
+  const maint = checkActiveMaintenanceAuth();
+  if (maint) {
+    if (maint.role === 'cleaning') return 'cleaning';
+    if (maint.role === 'viewer') return 'viewer';
+    return 'maintenance';
+  }
+  return 'public';
+}
+
+/**
  * Check if the caller has any authenticated WRITE role (Admin, Leader, or Maintenance/Cleaning).
- * Note: 'viewer' role is strictly Read-Only and has NO write permissions.
+ * Note: 'viewer' and 'public' roles are strictly Read-Only and have NO write permissions.
  */
 export function isCallerAuthenticated(): boolean {
-  const maint = checkActiveMaintenanceAuth();
-  const hasMaintenanceWriteRole = maint !== null && maint.role !== 'viewer';
-  return (
-    checkIsAdminUnlocked() ||
-    checkActiveLeaderAuth() !== null ||
-    hasMaintenanceWriteRole
-  );
+  const role = getActiveCallerRole();
+  return role === 'admin' || role === 'leader' || role === 'maintenance' || role === 'cleaning';
 }
