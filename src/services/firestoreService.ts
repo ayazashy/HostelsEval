@@ -184,6 +184,23 @@ export function stripUndefinedValues<T>(obj: T): T {
 }
 
 /**
+ * Only allow valid http(s) URLs so javascript: / data: links cannot be injected as ticket links.
+ */
+export function sanitizeSafeHttpUrl(url?: string): string | undefined {
+  if (!url) return undefined;
+  const trimmed = url.trim();
+  if (!trimmed) return undefined;
+  const normalized = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const parsed = new URL(normalized);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.toString();
+    }
+  } catch {}
+  return undefined;
+}
+
+/**
  * Helper to bound history array size so Firestore documents stay well under 1 MiB.
  */
 function appendFacilityHistoryEvent(
@@ -303,6 +320,7 @@ export async function saveEvaluation(
     notes: historyOverride?.notes !== undefined ? historyOverride.notes : evaluation.notes,
     media: historyOverride?.media !== undefined ? historyOverride.media : mediaList.slice(0, 3),
     maximoNumber: historyOverride?.maximoNumber || ticket?.maximoNumber,
+    maximoUrl: historyOverride?.maximoUrl || ticket?.maximoUrl,
     maximoAttachmentUrl: historyOverride?.maximoAttachmentUrl,
     maximoAttachmentName: historyOverride?.maximoAttachmentName || ticket?.maximoAttachmentName,
     evaluationRating: historyOverride?.evaluationRating,
@@ -408,6 +426,7 @@ export async function updateMaximoTicketInfo(
   evaluation: FixtureEvaluation,
   params: {
     maximoNumber: string;
+    maximoUrl?: string;
     attachmentBase64?: string;
     attachmentName?: string;
     attachmentType?: 'pdf' | 'image';
@@ -426,6 +445,13 @@ export async function updateMaximoTicketInfo(
 
   const nowIso = new Date().toISOString();
   const prevTicket = evaluation.maintenanceTicket || { status: 'open' };
+  const safeUrl =
+    params.maximoUrl !== undefined
+      ? params.maximoUrl.trim() === ''
+        ? undefined
+        : sanitizeSafeHttpUrl(params.maximoUrl)
+      : prevTicket.maximoUrl;
+
   const nextTicket: MaintenanceTicketInfo = {
     ...prevTicket,
     status:
@@ -433,6 +459,7 @@ export async function updateMaximoTicketInfo(
         ? 'in_progress'
         : prevTicket.status,
     maximoNumber: params.maximoNumber.trim(),
+    maximoUrl: safeUrl,
     maximoAttachmentBase64: params.attachmentBase64 ?? prevTicket.maximoAttachmentBase64,
     maximoAttachmentName: params.attachmentName ?? prevTicket.maximoAttachmentName,
     maximoAttachmentType: params.attachmentType ?? prevTicket.maximoAttachmentType,
@@ -450,9 +477,10 @@ export async function updateMaximoTicketInfo(
       actorName: params.actorName,
       actorRole: 'maintenance',
       notes: `تم تسجيل رقم بلاغ ماكسمو (${params.maximoNumber.trim()})${
-        params.attachmentName ? ` مع إرفاق مستند (${params.attachmentName})` : ''
-      }`,
+        safeUrl ? ' مع ربط رابط البلاغ في ماكسمو' : ''
+      }${params.attachmentName ? ` وإرفاق مستند (${params.attachmentName})` : ''}`,
       maximoNumber: params.maximoNumber.trim(),
+      maximoUrl: safeUrl,
       maximoAttachmentUrl: params.attachmentBase64,
       maximoAttachmentName: params.attachmentName,
       media: [],
@@ -464,6 +492,7 @@ export async function closeMaintenanceTicket(
   evaluation: FixtureEvaluation,
   params: {
     maximoNumber?: string;
+    maximoUrl?: string;
     attachmentBase64?: string;
     attachmentName?: string;
     attachmentType?: 'pdf' | 'image';
@@ -498,11 +527,16 @@ export async function closeMaintenanceTicket(
   const nowIso = new Date().toISOString();
   const prevTicket = evaluation.maintenanceTicket || { status: 'open' };
   const finalMaximoNumber = params.maximoNumber?.trim() || prevTicket.maximoNumber;
+  const finalMaximoUrl =
+    params.maximoUrl !== undefined && params.maximoUrl.trim()
+      ? sanitizeSafeHttpUrl(params.maximoUrl) ?? prevTicket.maximoUrl
+      : prevTicket.maximoUrl;
 
   const nextTicket: MaintenanceTicketInfo = {
     ...prevTicket,
     status: 'pending_evaluation',
     maximoNumber: finalMaximoNumber,
+    maximoUrl: finalMaximoUrl,
     maximoAttachmentBase64: params.attachmentBase64 ?? prevTicket.maximoAttachmentBase64,
     maximoAttachmentName: params.attachmentName ?? prevTicket.maximoAttachmentName,
     maximoAttachmentType: params.attachmentType ?? prevTicket.maximoAttachmentType,
@@ -536,6 +570,7 @@ export async function closeMaintenanceTicket(
       actorRole: 'maintenance',
       notes: `إغلاق البلاغ من الصيانة (بانتظار تقييم رائد المبنى): ${nextTicket.closureNotes}`,
       maximoNumber: finalMaximoNumber,
+      maximoUrl: finalMaximoUrl,
       maximoAttachmentUrl: params.attachmentBase64 ?? prevTicket.maximoAttachmentBase64,
       maximoAttachmentName: params.attachmentName ?? prevTicket.maximoAttachmentName,
       media: closureMedia,
@@ -551,6 +586,7 @@ export async function evaluateClosedTicket(
     feedback?: string;
     photoBase64?: string;
     leaderName: string;
+    ksuEvaluationConfirmed?: boolean;
   }
 ): Promise<CloudSaveResult> {
   const callerRole = getActiveCallerRole();
@@ -580,6 +616,7 @@ export async function evaluateClosedTicket(
     : [];
 
   if (params.isFixed) {
+    const confirmedKsu = !!params.ksuEvaluationConfirmed;
     const nextTicket: MaintenanceTicketInfo = {
       ...prevTicket,
       status: 'verified_closed',
@@ -587,6 +624,8 @@ export async function evaluateClosedTicket(
       verifiedBy: params.leaderName,
       serviceRating: params.rating,
       serviceFeedback: params.feedback?.trim() || 'تم التحقق ميدانياً وتأكيد جودة الإصلاح',
+      ksuEvaluationConfirmed: confirmedKsu,
+      ksuEvaluationConfirmedAt: confirmedKsu ? nowIso : undefined,
     };
 
     return saveEvaluation(
@@ -603,11 +642,12 @@ export async function evaluateClosedTicket(
         action: 'leader_verified',
         actorName: params.leaderName,
         actorRole: 'leader',
-        notes: `اعتماد إغلاق البلاغ وتقييم الخدمة (${params.rating}/5): ${
-          params.feedback?.trim() || 'تم التأكد من الإصلاح'
-        }`,
+        notes: `اعتماد إغلاق البلاغ وتقييم الخدمة (${params.rating}/5)${
+          confirmedKsu ? ' • تم تأكيد رفع التقييم في نماذج الجامعة (مكتمل)' : ''
+        }: ${params.feedback?.trim() || 'تم التأكد من الإصلاح'}`,
         evaluationRating: params.rating,
         maximoNumber: prevTicket.maximoNumber,
+        maximoUrl: prevTicket.maximoUrl,
         media: evalMedia,
       }
     );

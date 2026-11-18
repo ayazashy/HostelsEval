@@ -16,6 +16,7 @@ import {
   DEFECT_TAGS,
   SERVICE_DEPARTMENTS,
   resolveEvaluationDepartment,
+  KSU_SERVICE_EVALUATION_URL,
 } from '../../config/facilityTemplates';
 import { generateFixtureUID } from '../../utils/uidGenerator';
 import { processFacilityMediaFile, compressAndWatermarkImage } from '../../utils/imageCompressor';
@@ -43,6 +44,8 @@ import {
   Plus,
   Star,
   Send,
+  ExternalLink,
+  Copy,
   X,
 } from 'lucide-react';
 
@@ -130,6 +133,8 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
   const [isSendingChat, setIsSendingChat] = useState<boolean>(false);
   const [quickRejectReason, setQuickRejectReason] = useState<string>('');
   const [showRejectInput, setShowRejectInput] = useState<boolean>(false);
+  const [chatKsuConfirmed, setChatKsuConfirmed] = useState<boolean>(false);
+  const [copiedMaximo, setCopiedMaximo] = useState<boolean>(false);
 
   useEffect(() => {
     if (existingEvaluation) {
@@ -415,6 +420,10 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
   // Direct Approve / Reject from inside the Facility Chat Thread
   const handleQuickApproveInThread = async () => {
     if (!existingEvaluation || isReadOnly) return;
+    if (!chatKsuConfirmed) {
+      alert('يرجى فتح رابط تقييم الخدمة وإدخال رقم البلاغ (مكتمل) ثم تأكيد إتمام التقييم أولاً.');
+      return;
+    }
     setIsSendingChat(true);
     try {
       await evaluateClosedTicket(existingEvaluation, {
@@ -422,7 +431,9 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
         rating: 5,
         feedback: 'تمت معاينة المرفق واعتماد الإصلاح من داخل محادثة المرفق ✅',
         leaderName: inspectorName,
+        ksuEvaluationConfirmed: true,
       });
+      setChatKsuConfirmed(false);
       onRefresh?.();
     } finally {
       setIsSendingChat(false);
@@ -514,6 +525,23 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
               {ticket?.maximoNumber && (
                 <span className="text-[10px] font-mono font-bold bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded border border-blue-200">
                   ماكسمو #{ticket.maximoNumber}
+                </span>
+              )}
+              {ticket?.maximoUrl && (
+                <a
+                  href={ticket.maximoUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-[10px] font-bold bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 rounded inline-flex items-center gap-1 transition"
+                >
+                  <ExternalLink className="w-2.5 h-2.5" />
+                  <span>رابط ماكسيمو</span>
+                </a>
+              )}
+              {ticket?.status === 'verified_closed' && ticket?.ksuEvaluationConfirmed && (
+                <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-300">
+                  تم تقييم الخدمة (مكتمل) ✓
                 </span>
               )}
               {ticket?.status === 'pending_evaluation' && (
@@ -949,18 +977,112 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                     </div>
                   )}
 
+                  {/* Linked Maximo Ticket Info (Number + Direct Link + Attachment) */}
+                  {(ticket.maximoNumber || ticket.maximoUrl || ticket.maximoAttachmentBase64) && (
+                    <div className="flex flex-wrap items-center gap-2 bg-blue-50/70 border border-blue-200 rounded-xl p-2.5">
+                      {ticket.maximoNumber && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(ticket.maximoNumber!);
+                            setCopiedMaximo(true);
+                            setTimeout(() => setCopiedMaximo(false), 2000);
+                          }}
+                          className="font-mono font-bold bg-white border border-blue-300 text-blue-900 px-2 py-1 rounded-lg text-[11px] inline-flex items-center gap-1 hover:bg-blue-100"
+                          title="نسخ رقم البلاغ"
+                        >
+                          <span>رقم ماكسمو: #{ticket.maximoNumber}</span>
+                          {copiedMaximo ? (
+                            <Check className="w-3 h-3 text-emerald-600" />
+                          ) : (
+                            <Copy className="w-3 h-3" />
+                          )}
+                        </button>
+                      )}
+
+                      {ticket.maximoUrl && (
+                        <a
+                          href={ticket.maximoUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] inline-flex items-center gap-1 transition"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                          <span>فتح رابط البلاغ في ماكسيمو</span>
+                        </a>
+                      )}
+
+                      {ticket.maximoAttachmentBase64 && (
+                        ticket.maximoAttachmentType === 'pdf' ? (
+                          <a
+                            href={ticket.maximoAttachmentBase64}
+                            download={
+                              ticket.maximoAttachmentName ||
+                              `Maximo_${ticket.maximoNumber || 'ticket'}.pdf`
+                            }
+                            className="px-2.5 py-1 rounded-lg bg-white border border-blue-200 text-blue-700 font-bold text-[11px] inline-flex items-center gap-1"
+                          >
+                            <FileText className="w-3 h-3 text-rose-600" />
+                            <span>ملف البلاغ (PDF)</span>
+                          </a>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setPreviewImage(ticket.maximoAttachmentBase64 || null)}
+                            className="px-2.5 py-1 rounded-lg bg-white border border-blue-200 text-blue-700 font-bold text-[11px] inline-flex items-center gap-1"
+                          >
+                            <ImageIcon className="w-3 h-3 text-blue-600" />
+                            <span>مرفق البلاغ</span>
+                          </button>
+                        )
+                      )}
+                    </div>
+                  )}
+
+                  {ticket.status === 'verified_closed' && ticket.ksuEvaluationConfirmed && (
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 text-[11px] font-bold text-emerald-800 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>تم تأكيد رفع تقييم الخدمة في نماذج الجامعة (مكتمل) ✓</span>
+                    </div>
+                  )}
+
                   {/* Direct Leader Approval / Rejection Buttons inside the Chat Thread */}
                   {!isReadOnly && ticket.status === 'pending_evaluation' && (
-                    <div className="pt-2 border-t border-slate-100 flex flex-col gap-2">
+                    <div className="pt-2 border-t border-slate-100 flex flex-col gap-2.5">
                       <span className="font-bold text-purple-900">
-                        قام الفني بإغلاق البلاغ وإرفاق النتيجة — هل تعتمد الإصلاح؟
+                        قام الفني بإغلاق البلاغ وإرفاق النتيجة — يلزم رفع تقييم الخدمة ثم الاعتماد:
                       </span>
+
+                      <div className="bg-blue-50 border border-blue-200 rounded-xl p-2.5 flex flex-col gap-2">
+                        <a
+                          href={KSU_SERVICE_EVALUATION_URL}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-[11px] flex items-center justify-center gap-1.5 transition"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          <span>فتح رابط رفع تقييم الخدمة (forms.ksu.edu.sa)</span>
+                        </a>
+
+                        <label className="flex items-start gap-2 bg-white border border-blue-200 rounded-lg p-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={chatKsuConfirmed}
+                            onChange={(e) => setChatKsuConfirmed(e.target.checked)}
+                            className="mt-0.5 rounded border-slate-400"
+                          />
+                          <span className="text-[11px] font-bold text-slate-900 leading-snug">
+                            أؤكد أنه تم رفع تقييم الخدمة بالرابط برقم البلاغ وبحالة (مكتمل) ✅
+                          </span>
+                        </label>
+                      </div>
+
                       <div className="grid grid-cols-2 gap-2">
                         <button
                           type="button"
-                          disabled={isSendingChat}
+                          disabled={isSendingChat || !chatKsuConfirmed}
                           onClick={handleQuickApproveInThread}
-                          className="py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center justify-center gap-1.5 shadow-xs"
+                          className="py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold flex items-center justify-center gap-1.5 shadow-xs"
                         >
                           <CheckCircle2 className="w-4 h-4" />
                           <span>اعتماد الإصلاح ✅</span>
@@ -1084,11 +1206,24 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                           <span>
                             المرسل: <strong>{ev.actorName}</strong>
                           </span>
-                          {ev.maximoNumber && (
-                            <span className="font-mono font-bold text-blue-700">
-                              ماكسمو #{ev.maximoNumber}
-                            </span>
-                          )}
+                          <div className="flex items-center gap-2">
+                            {ev.maximoNumber && (
+                              <span className="font-mono font-bold text-blue-700">
+                                ماكسمو #{ev.maximoNumber}
+                              </span>
+                            )}
+                            {ev.maximoUrl && (
+                              <a
+                                href={ev.maximoUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[10px] font-bold text-blue-600 underline inline-flex items-center gap-0.5"
+                              >
+                                <ExternalLink className="w-2.5 h-2.5" />
+                                <span>الرابط</span>
+                              </a>
+                            )}
+                          </div>
                         </div>
 
                         {ev.evaluationRating && (

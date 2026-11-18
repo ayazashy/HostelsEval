@@ -76,6 +76,7 @@ export interface FacilityHistoryEvent {
   notes?: string;
   media?: FacilityMediaItem[];
   maximoNumber?: string;
+  maximoUrl?: string;
   maximoAttachmentUrl?: string;
   maximoAttachmentName?: string;
   evaluationRating?: number;
@@ -92,6 +93,7 @@ export interface MaintenanceTicketInfo {
   status: MaintenanceTicketStatus;
   department?: ServiceDepartment;
   maximoNumber?: string;
+  maximoUrl?: string;
   maximoAttachmentBase64?: string;
   maximoAttachmentName?: string;
   maximoAttachmentType?: 'pdf' | 'image';
@@ -109,6 +111,8 @@ export interface MaintenanceTicketInfo {
   verifiedBy?: string;
   serviceRating?: number;
   serviceFeedback?: string;
+  ksuEvaluationConfirmed?: boolean;
+  ksuEvaluationConfirmedAt?: string;
 }
 
 export interface MaintenanceAuth {

@@ -7,7 +7,7 @@ import React, { useState } from 'react';
 import { FixtureEvaluation } from '../../types/hostel';
 import { evaluateClosedTicket } from '../../services/firestoreService';
 import { compressAndWatermarkImage } from '../../utils/imageCompressor';
-import { DEFECT_TAGS, getZoneNameAr } from '../../config/facilityTemplates';
+import { DEFECT_TAGS, getZoneNameAr, KSU_SERVICE_EVALUATION_URL } from '../../config/facilityTemplates';
 import { ImageViewerModal } from '../Common/ImageViewerModal';
 import {
   Star,
@@ -19,6 +19,9 @@ import {
   ShieldAlert,
   Wrench,
   Trash2,
+  ExternalLink,
+  Copy,
+  Check,
   X,
 } from 'lucide-react';
 
@@ -44,6 +47,8 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
   const [rating, setRating] = useState<number>(5);
   const [feedback, setFeedback] = useState<string>('');
   const [photoBase64, setPhotoBase64] = useState<string | undefined>(undefined);
+  const [ksuConfirmed, setKsuConfirmed] = useState<boolean>(false);
+  const [copiedMaximo, setCopiedMaximo] = useState<boolean>(false);
   const [isCompressing, setIsCompressing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -79,6 +84,11 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
       return;
     }
 
+    if (isFixed && !ksuConfirmed) {
+      alert('يرجى رفع تقييم الخدمة عبر رابط نماذج الجامعة أولاً ثم وضع علامة تأكيد التقييم.');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await evaluateClosedTicket(currentItem, {
@@ -87,11 +97,13 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
         feedback,
         photoBase64,
         leaderName,
+        ksuEvaluationConfirmed: isFixed ? ksuConfirmed : false,
       });
 
       // Reset form for next pending ticket if any
       setFeedback('');
       setPhotoBase64(undefined);
+      setKsuConfirmed(false);
       setRating(5);
       setIsFixed(true);
       setCurrentIndex(0);
@@ -146,11 +158,39 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
                   {currentItem.id}
                 </span>
               </div>
-              {ticket?.maximoNumber && (
-                <span className="font-mono font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-lg border border-emerald-300">
-                  بلاغ ماكسمو #{ticket.maximoNumber}
-                </span>
-              )}
+              <div className="flex flex-wrap items-center gap-1.5">
+                {ticket?.maximoNumber && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(ticket.maximoNumber!);
+                      setCopiedMaximo(true);
+                      setTimeout(() => setCopiedMaximo(false), 2000);
+                    }}
+                    className="font-mono font-bold bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-2.5 py-1 rounded-lg border border-emerald-300 inline-flex items-center gap-1.5 transition"
+                    title="نسخ رقم بلاغ ماكسمو"
+                  >
+                    <span>بلاغ ماكسمو #{ticket.maximoNumber}</span>
+                    {copiedMaximo ? (
+                      <Check className="w-3 h-3 text-emerald-700" />
+                    ) : (
+                      <Copy className="w-3 h-3 text-emerald-700" />
+                    )}
+                  </button>
+                )}
+
+                {ticket?.maximoUrl && (
+                  <a
+                    href={ticket.maximoUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold transition shadow-xs"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    <span>رابط البلاغ في ماكسمو</span>
+                  </a>
+                )}
+              </div>
             </div>
 
             {/* Defects that were reported */}
@@ -362,10 +402,67 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
             </div>
           </div>
 
+          {/* Step 4: Mandatory KSU Service Evaluation Form Confirmation when Approved */}
+          {isFixed && (
+            <div className="bg-blue-50 border-2 border-blue-300 rounded-2xl p-3.5 flex flex-col gap-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-bold text-blue-950 text-xs">
+                  4. رفع تقييم الخدمة في نماذج الجامعة (إلزامي لتأكيد إغلاق كل بلاغ):
+                </span>
+                {ticket?.maximoNumber && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(ticket.maximoNumber!);
+                      setCopiedMaximo(true);
+                      setTimeout(() => setCopiedMaximo(false), 2000);
+                    }}
+                    className="px-2 py-1 rounded-lg bg-white border border-blue-300 text-blue-900 font-mono font-bold text-[11px] inline-flex items-center gap-1 hover:bg-blue-100"
+                  >
+                    <span>رقم البلاغ: {ticket.maximoNumber}</span>
+                    {copiedMaximo ? (
+                      <Check className="w-3 h-3 text-emerald-600" />
+                    ) : (
+                      <Copy className="w-3 h-3" />
+                    )}
+                  </button>
+                )}
+              </div>
+
+              <p className="text-[11px] text-blue-900 leading-relaxed">
+                لإغلاق البلاغ نهائياً، يرجى الدخول إلى رابط التقييم المعتمد وإدخال{' '}
+                <strong>رقم البلاغ ({ticket?.maximoNumber || 'المرتبط بالمرفق'})</strong>{' '}
+                واختيار الحالة <strong>«مكتمل»</strong>، ثم تأكيد الإرسال أدناه:
+              </p>
+
+              <a
+                href={KSU_SERVICE_EVALUATION_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-2.5 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 shadow-xs transition"
+              >
+                <ExternalLink className="w-4 h-4" />
+                <span>فتح رابط رفع تقييم الخدمة (forms.ksu.edu.sa)</span>
+              </a>
+
+              <label className="flex items-start gap-2.5 bg-white border border-blue-200 rounded-xl p-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={ksuConfirmed}
+                  onChange={(e) => setKsuConfirmed(e.target.checked)}
+                  className="mt-0.5 rounded border-slate-400"
+                />
+                <span className="text-xs font-bold text-slate-900 leading-snug">
+                  أؤكد أنه تم رفع تقييم الخدمة عبر رابط نماذج الجامعة أعلاه وإدخال رقم البلاغ وبحالة (مكتمل) ✅
+                </span>
+              </label>
+            </div>
+          )}
+
           <button
             type="submit"
-            disabled={isSubmitting || isCompressing}
-            className={`w-full py-3 rounded-xl font-bold text-white shadow-md transition flex items-center justify-center gap-2 ${
+            disabled={isSubmitting || isCompressing || (isFixed === true && !ksuConfirmed)}
+            className={`w-full py-3 rounded-xl font-bold text-white shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${
               isFixed
                 ? 'bg-emerald-600 hover:bg-emerald-700'
                 : 'bg-rose-600 hover:bg-rose-700'

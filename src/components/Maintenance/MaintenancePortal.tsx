@@ -47,6 +47,7 @@ import {
   MessageSquare,
   Send,
   Sparkles,
+  ExternalLink,
   X,
 } from 'lucide-react';
 
@@ -79,14 +80,16 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
-  // Per-ticket editing state for Maximo # & attachment
+  // Per-ticket editing state for Maximo # & URL & attachment
   const [maximoInputs, setMaximoInputs] = useState<Record<string, string>>({});
+  const [maximoUrlInputs, setMaximoUrlInputs] = useState<Record<string, string>>({});
   const [savingTicketId, setSavingTicketId] = useState<string | null>(null);
   const [uploadingAttachmentId, setUploadingAttachmentId] = useState<string | null>(null);
 
   // Closing Ticket Modal State
   const [closingItem, setClosingItem] = useState<FixtureEvaluation | null>(null);
   const [closureMaximoNumber, setClosureMaximoNumber] = useState<string>('');
+  const [closureMaximoUrl, setClosureMaximoUrl] = useState<string>('');
   const [closureNotes, setClosureNotes] = useState<string>('');
   const [closurePhotoBase64, setClosurePhotoBase64] = useState<string | undefined>(undefined);
   const [closureAttachment, setClosureAttachment] = useState<{
@@ -262,15 +265,20 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
       maximoInputs[item.id] !== undefined
         ? maximoInputs[item.id]
         : item.maintenanceTicket?.maximoNumber || '';
-    if (!val.trim()) {
-      alert('يرجى إدخال رقم البلاغ أولاً');
+    const urlVal =
+      maximoUrlInputs[item.id] !== undefined
+        ? maximoUrlInputs[item.id]
+        : item.maintenanceTicket?.maximoUrl || '';
+    if (!val.trim() && !urlVal.trim()) {
+      alert('يرجى إدخال رقم البلاغ أو رابط البلاغ في ماكسمو أولاً');
       return;
     }
 
     setSavingTicketId(item.id);
     try {
       await updateMaximoTicketInfo(item, {
-        maximoNumber: val.trim(),
+        maximoNumber: val.trim() || item.maintenanceTicket?.maximoNumber || 'مربوط برابط',
+        maximoUrl: urlVal,
         actorName: technicianName,
       });
       onRefreshEvaluations();
@@ -318,6 +326,9 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
     setClosingItem(item);
     setClosureMaximoNumber(
       maximoInputs[item.id] || item.maintenanceTicket?.maximoNumber || ''
+    );
+    setClosureMaximoUrl(
+      maximoUrlInputs[item.id] || item.maintenanceTicket?.maximoUrl || ''
     );
     setClosureNotes('');
     setClosurePhotoBase64(undefined);
@@ -372,6 +383,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
     try {
       await closeMaintenanceTicket(closingItem, {
         maximoNumber: closureMaximoNumber.trim() || undefined,
+        maximoUrl: closureMaximoUrl.trim() || undefined,
         attachmentBase64: closureAttachment?.base64,
         attachmentName: closureAttachment?.name,
         attachmentType: closureAttachment?.type,
@@ -899,46 +911,80 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
 
                 {/* Bottom Section: Maximo Number (for Maintenance) & Close with Fix Photo */}
                 <div className="pt-3 border-t border-slate-200 flex flex-col gap-2.5 bg-slate-50/70 -mx-4 -mb-4 p-4 rounded-b-2xl">
-                  {/* Maximo Ticket # + Attachment Row (Shown only for Maintenance track) */}
+                  {/* Maximo Ticket # + Link + Attachment Row (Shown only for Maintenance track) */}
                   {!isCleaningMode && (
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <div className="flex-1 flex gap-1.5">
-                        <input
-                          type="text"
-                          value={currentMaxInput}
-                          onChange={(e) =>
-                            setMaximoInputs((prev) => ({ ...prev, [item.id]: e.target.value }))
-                          }
-                          placeholder="رقم البلاغ في ماكسمو (Maximo #)..."
-                          className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-900 focus:border-blue-500 focus:outline-none"
-                        />
-                        <button
-                          type="button"
-                          disabled={savingTicketId === item.id}
-                          onClick={() => handleSaveMaximoNumber(item)}
-                          className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shrink-0 transition"
-                        >
-                          {savingTicketId === item.id ? '...' : 'حفظ الرقم'}
-                        </button>
+                    <div className="flex flex-col gap-2">
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <div className="flex-1 flex gap-1.5">
+                          <input
+                            type="text"
+                            value={currentMaxInput}
+                            onChange={(e) =>
+                              setMaximoInputs((prev) => ({ ...prev, [item.id]: e.target.value }))
+                            }
+                            placeholder="رقم البلاغ في ماكسمو (Maximo #)..."
+                            className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-900 focus:border-blue-500 focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            disabled={savingTicketId === item.id}
+                            onClick={() => handleSaveMaximoNumber(item)}
+                            className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shrink-0 transition"
+                          >
+                            {savingTicketId === item.id ? '...' : 'حفظ الرقم والرابط'}
+                          </button>
+                        </div>
+
+                        <label className="cursor-pointer px-3 py-2 bg-white hover:bg-blue-50 text-blue-700 border border-blue-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shrink-0 transition">
+                          <input
+                            type="file"
+                            accept="application/pdf,image/*"
+                            onChange={(e) => handleUploadMaximoAttachment(item, e)}
+                            className="hidden"
+                            disabled={uploadingAttachmentId === item.id}
+                          />
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>
+                            {uploadingAttachmentId === item.id
+                              ? 'جاري الرفع...'
+                              : ticket?.maximoAttachmentBase64
+                              ? 'تحديث مرفق البلاغ'
+                              : 'رفع PDF / صورة البلاغ'}
+                          </span>
+                        </label>
                       </div>
 
-                      <label className="cursor-pointer px-3 py-2 bg-white hover:bg-blue-50 text-blue-700 border border-blue-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shrink-0 transition">
+                      {/* Maximo Direct URL Input (visible to Building Leader once linked) */}
+                      <div className="flex items-center gap-1.5">
                         <input
-                          type="file"
-                          accept="application/pdf,image/*"
-                          onChange={(e) => handleUploadMaximoAttachment(item, e)}
-                          className="hidden"
-                          disabled={uploadingAttachmentId === item.id}
+                          type="url"
+                          dir="ltr"
+                          value={
+                            maximoUrlInputs[item.id] !== undefined
+                              ? maximoUrlInputs[item.id]
+                              : ticket?.maximoUrl || ''
+                          }
+                          onChange={(e) =>
+                            setMaximoUrlInputs((prev) => ({
+                              ...prev,
+                              [item.id]: e.target.value,
+                            }))
+                          }
+                          placeholder="رابط البلاغ في ماكسمو (https://...) — يظهر مباشرة لرائد المبنى"
+                          className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-[11px] font-mono text-slate-900 focus:border-blue-500 focus:outline-none text-left"
                         />
-                        <Upload className="w-3.5 h-3.5" />
-                        <span>
-                          {uploadingAttachmentId === item.id
-                            ? 'جاري الرفع...'
-                            : ticket?.maximoAttachmentBase64
-                            ? 'تحديث مرفق البلاغ'
-                            : 'رفع PDF / صورة البلاغ'}
-                        </span>
-                      </label>
+                        {ticket?.maximoUrl && (
+                          <a
+                            href={ticket.maximoUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-[11px] font-bold flex items-center gap-1 shrink-0"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            <span>فتح الرابط</span>
+                          </a>
+                        )}
+                      </div>
                     </div>
                   )}
 
@@ -1004,15 +1050,23 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                       </button>
                     </div>
                   ) : ticketStatus === 'verified_closed' ? (
-                    <div className="flex items-center justify-between text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 font-bold">
-                      <span className="flex items-center gap-1.5">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        <span>تم اعتماد الإغلاق من رائد المبنى ({ticket?.verifiedBy})</span>
-                      </span>
-                      {ticket?.serviceRating && (
-                        <span className="flex items-center gap-1 text-amber-600">
-                          <Star className="w-3.5 h-3.5 fill-amber-400" />
-                          <span>{ticket.serviceRating}/5</span>
+                    <div className="flex flex-col gap-1.5 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 font-bold">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          <span>تم اعتماد الإغلاق من رائد المبنى ({ticket?.verifiedBy})</span>
+                        </span>
+                        {ticket?.serviceRating && (
+                          <span className="flex items-center gap-1 text-amber-600">
+                            <Star className="w-3.5 h-3.5 fill-amber-400" />
+                            <span>{ticket.serviceRating}/5</span>
+                          </span>
+                        )}
+                      </div>
+                      {ticket?.ksuEvaluationConfirmed && (
+                        <span className="text-[11px] text-emerald-700 flex items-center gap-1">
+                          <Check className="w-3.5 h-3.5" />
+                          <span>تم تأكيد رفع تقييم الخدمة في نماذج الجامعة (مكتمل) ✓</span>
                         </span>
                       )}
                     </div>
@@ -1058,18 +1112,34 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
 
             <form onSubmit={handleConfirmCloseTicket} className="flex flex-col gap-3.5 text-xs">
               {!isCleaningMode && (
-                <div className="flex flex-col gap-1">
-                  <label className="font-bold text-slate-700">
-                    رقم البلاغ في ماكسمو (Maximo Number - اختياري أو حسب النظام):
-                  </label>
-                  <input
-                    type="text"
-                    value={closureMaximoNumber}
-                    onChange={(e) => setClosureMaximoNumber(e.target.value)}
-                    placeholder="أدخل رقم بلاغ ماكسمو..."
-                    className="bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-mono font-bold text-slate-900 focus:bg-white"
-                  />
-                </div>
+                <>
+                  <div className="flex flex-col gap-1">
+                    <label className="font-bold text-slate-700">
+                      رقم البلاغ في ماكسمو (Maximo Number - اختياري أو حسب النظام):
+                    </label>
+                    <input
+                      type="text"
+                      value={closureMaximoNumber}
+                      onChange={(e) => setClosureMaximoNumber(e.target.value)}
+                      placeholder="أدخل رقم بلاغ ماكسمو..."
+                      className="bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-mono font-bold text-slate-900 focus:bg-white"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label className="font-bold text-slate-700">
+                      رابط البلاغ في ماكسمو (يظهر لرائد المبنى عند المراجعة):
+                    </label>
+                    <input
+                      type="url"
+                      dir="ltr"
+                      value={closureMaximoUrl}
+                      onChange={(e) => setClosureMaximoUrl(e.target.value)}
+                      placeholder="https://..."
+                      className="bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-mono text-slate-900 focus:bg-white text-left"
+                    />
+                  </div>
+                </>
               )}
 
               {!isCleaningMode && !closingItem.maintenanceTicket?.maximoAttachmentBase64 && (

@@ -10,6 +10,9 @@ import {
   ServiceDepartment,
 } from '../types/hostel';
 
+// Official KSU Service Evaluation Form (required upon closing maintenance tickets)
+export const KSU_SERVICE_EVALUATION_URL = 'https://forms.ksu.edu.sa/form/mknkcbs';
+
 // ----------------------------------------------------------------------------
 // 1. Zone & Wing Naming Helpers (Floor 1 has Apt 1 & Apt 2 instead of Wing 4)
 // ----------------------------------------------------------------------------
