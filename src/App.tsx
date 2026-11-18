@@ -291,7 +291,7 @@ export function App() {
         onLockSession={handleLockSession}
       />
 
-      <main className="flex-1 p-3 sm:p-6 md:p-8">
+      <main className="flex-1 p-3 pb-24 sm:p-6 sm:pb-24 md:p-8 md:pb-8">
         {activeView === 'campus' && (
           <CampusOverview
             buildings={buildings}

@@ -549,6 +549,7 @@ input:focus, textarea:focus, select:focus {
 .max-h-\[88vh\] { max-height: 88vh; }
 
 .pb-20 { padding-bottom: 5rem; }
+.pb-24 { padding-bottom: 6rem; }
 .pr-4 { padding-right: 1rem; }
 .pr-8 { padding-right: 2rem; }
 .mr-2 { margin-right: 0.5rem; }
@@ -647,6 +648,7 @@ input:focus, textarea:focus, select:focus {
 
 @media (min-width: 640px) {
   .sm\:pb-8 { padding-bottom: 2rem; }
+  .sm\:pb-24 { padding-bottom: 6rem; }
   .sm\:p-4 { padding: 1rem; }
   .sm\:p-6 { padding: 1.5rem; }
   .sm\:p-7 { padding: 1.75rem; }
@@ -667,6 +669,7 @@ input:focus, textarea:focus, select:focus {
   .md\:flex { display: flex !important; }
   .md\:items-center { align-items: center; }
   .md\:pb-0 { padding-bottom: 0px; }
+  .md\:pb-8 { padding-bottom: 2rem; }
   .md\:p-8 { padding: 2rem; }
 }
 

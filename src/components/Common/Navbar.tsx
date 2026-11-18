@@ -268,7 +268,13 @@ export const Navbar: React.FC<NavbarProps> = ({
       </header>
 
       {/* 3. Mobile Bottom Navigation Bar (Thumb-Friendly for Phone Users) */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-1.5 py-1.5 flex items-stretch justify-around gap-1 print:hidden shadow-lg">
+      <nav
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-slate-300 px-1.5 py-1.5 flex items-stretch justify-around gap-1 print:hidden"
+        style={{
+          boxShadow: '0 -4px 16px rgba(15, 23, 42, 0.08)',
+          paddingBottom: 'max(0.375rem, env(safe-area-inset-bottom))',
+        }}
+      >
         <button
           type="button"
           onClick={() => onNavigate('campus')}
