@@ -925,8 +925,10 @@ export const DEFECT_TAGS: DefectTag[] = [
 ];
 
 /**
- * Determine whether an evaluation belongs to the Cleaning/Pest portal or Maintenance portal,
- * and determine its primary ServiceDepartment.
+ * Deterministic routing: resolves whether an evaluation belongs to the Cleaning/Pest portal
+ * or one of the 4 Maintenance departments based on its category, fixture type, and defects.
+ * Note: Intentionally ignores stale `maintenanceTicket.department` when standardized rules apply
+ * so legacy tickets (e.g. broken/bad_odor on toilets) immediately route to their true department.
  */
 export function resolveEvaluationDepartment(item: {
   categoryCode?: string;
@@ -934,21 +936,80 @@ export function resolveEvaluationDepartment(item: {
   defects?: string[];
   maintenanceTicket?: { department?: ServiceDepartment };
 }): ServiceDepartment {
-  if (item.maintenanceTicket?.department) {
-    return item.maintenanceTicket.department;
-  }
-  if (item.fixtureTypeCode === 'PST') return 'pest_control';
-  if (item.categoryCode === 'CLN' || item.fixtureTypeCode === 'HYG') {
-    const hasPest = (item.defects || []).some((d) => d.startsWith('pst_'));
+  const cat = (item.categoryCode || '').toUpperCase();
+  const fType = (item.fixtureTypeCode || '').toUpperCase();
+  const defects = item.defects || [];
+
+  // 1. Strict isolation for Cleaning & Pest Control Category ('CLN') and Fixtures ('HYG', 'PST')
+  if (fType === 'PST') return 'pest_control';
+  if (cat === 'CLN' || fType === 'HYG') {
+    const hasPest = defects.some((d) => d.startsWith('pst_'));
     return hasPest ? 'pest_control' : 'cleaning';
   }
-  for (const dId of item.defects || []) {
-    const tag = DEFECT_TAGS.find((t) => t.id === dId);
-    if (tag?.department) return tag.department;
+
+  // Pest tags anywhere still route to pest control; pure cleaning tags (cln_*) route to cleaning
+  if (defects.some((d) => d.startsWith('pst_'))) return 'pest_control';
+  if (defects.length > 0 && defects.every((d) => d.startsWith('cln_'))) return 'cleaning';
+
+  // 2. Explicit V3 standardized defect prefixes (plm_, elc_, hvac_, civ_) prioritized by criticality
+  const explicitDepts: ServiceDepartment[] = [];
+  for (const dId of defects) {
+    if (dId.startsWith('plm_')) explicitDepts.push('plumbing');
+    else if (dId.startsWith('elc_')) explicitDepts.push('electrical');
+    else if (dId.startsWith('hvac_')) explicitDepts.push('hvac_mechanical');
+    else if (dId.startsWith('civ_')) explicitDepts.push('carpentry_civil');
   }
-  if (item.categoryCode === 'BTH') return 'plumbing';
-  if (item.categoryCode === 'KIT') return 'plumbing';
-  return 'carpentry_civil';
+
+  if (explicitDepts.length > 0) {
+    if (explicitDepts.includes('plumbing')) return 'plumbing';
+    if (explicitDepts.includes('hvac_mechanical')) return 'hvac_mechanical';
+    if (explicitDepts.includes('electrical')) return 'electrical';
+    if (explicitDepts.includes('carpentry_civil')) return 'carpentry_civil';
+  }
+
+  // 3. Fixture-level routing (fixes legacy 'broken' -> carpentry or 'bad_odor' -> cleaning on Toilets/Showers/Sinks)
+  if (['TOI', 'SHW', 'SNK', 'WHT', 'ROF', 'EXT'].includes(fType)) {
+    return 'plumbing';
+  }
+  if (['EXH', 'STV', 'KEX', 'FAP', 'RFL'].includes(fType)) {
+    return 'electrical';
+  }
+  if (['WHV', 'ELV', 'FIR'].includes(fType)) {
+    return 'hvac_mechanical';
+  }
+  if (['CAB', 'BLC', 'COR', 'OFC'].includes(fType)) {
+    return 'carpentry_civil';
+  }
+  if (fType === 'CEL') {
+    if (defects.some((d) => d === 'leak' || d === 'clogged')) return 'hvac_mechanical';
+    return 'electrical';
+  }
+  if (fType === 'WEL') {
+    if (defects.includes('detached') || defects.includes('broken')) return 'carpentry_civil';
+    return 'electrical';
+  }
+  if (fType === 'FLR') {
+    if (
+      defects.some((d) =>
+        ['leak', 'clogged', 'rust', 'low_pressure', 'bad_odor', 'dirty_walls'].includes(d)
+      )
+    ) {
+      return 'plumbing';
+    }
+    return 'carpentry_civil';
+  }
+
+  // 4. Legacy tag fallback for custom/other fixture types
+  for (const dId of defects) {
+    if (dId.startsWith('cln_') || dId.startsWith('pst_')) continue;
+    const tag = DEFECT_TAGS.find((t) => t.id === dId);
+    if (tag?.department && tag.department !== 'cleaning' && tag.department !== 'pest_control') {
+      return tag.department;
+    }
+  }
+
+  if (cat === 'BTH' || cat === 'KIT') return 'plumbing';
+  return item.maintenanceTicket?.department || 'carpentry_civil';
 }
 
 export function isCleaningOrPestTicket(item: {

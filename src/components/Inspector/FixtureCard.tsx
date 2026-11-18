@@ -192,7 +192,27 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
     return matched.length > 0 ? matched : DEFECT_TAGS.slice(0, 12);
   }, [template.defaultDefectTags, selectedDefects]);
 
-  const visibleDefects = showAllDefects ? DEFECT_TAGS : primaryDefects;
+  const trackFilteredTags = React.useMemo(() => {
+    const LEGACY_IDS = new Set([
+      'leak',
+      'rust',
+      'broken',
+      'detached',
+      'clogged',
+      'low_pressure',
+      'bad_odor',
+      'cold_heater',
+      'dirty_walls',
+      'exhaust_dead',
+    ]);
+    return DEFECT_TAGS.filter((t) => {
+      if (LEGACY_IDS.has(t.id)) return false;
+      const isCleaningTag = t.department === 'cleaning' || t.department === 'pest_control';
+      return categoryCode === 'CLN' ? isCleaningTag : !isCleaningTag;
+    });
+  }, [categoryCode]);
+
+  const visibleDefects = showAllDefects ? trackFilteredTags : primaryDefects;
 
   // 1-Tap Quick "Operational" Save for fast mobile walkthroughs
   const handleQuickMarkOperational = async () => {
@@ -466,12 +486,11 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
   const ticket = existingEvaluation?.maintenanceTicket;
   const isEvaluatedBefore = !!existingEvaluation;
 
-  // Determine routed department badge
+  // Determine routed department badge dynamically from current fixture + selected defects
   const activeDeptKey = resolveEvaluationDepartment({
     categoryCode,
     fixtureTypeCode: template.typeCode,
     defects: selectedDefects,
-    maintenanceTicket: ticket,
   });
   const activeDeptInfo = SERVICE_DEPARTMENTS[activeDeptKey];
 
