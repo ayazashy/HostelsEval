@@ -268,31 +268,31 @@ export const Navbar: React.FC<NavbarProps> = ({
       </header>
 
       {/* 3. Mobile Bottom Navigation Bar (Thumb-Friendly for Phone Users) */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-2 py-1.5 grid grid-cols-5 gap-1 print:hidden shadow-lg">
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-1.5 py-1.5 flex items-stretch justify-around gap-1 print:hidden shadow-lg">
         <button
           type="button"
           onClick={() => onNavigate('campus')}
-          className={`flex flex-col items-center justify-center py-1.5 rounded-xl text-[10px] font-bold transition ${
+          className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold transition ${
             activeView === 'campus' || activeView === 'building_detail'
               ? 'text-blue-600 bg-blue-50/80'
               : 'text-slate-500'
           }`}
         >
-          <Building2 className="w-4 h-4 mb-0.5" />
-          <span>المباني</span>
+          <Building2 className="w-4 h-4 mb-0.5 shrink-0" />
+          <span className="truncate max-w-full">المباني</span>
         </button>
 
         <button
           type="button"
           onClick={() => onNavigate('leaders_kpi')}
-          className={`flex flex-col items-center justify-center py-1.5 rounded-xl text-[10px] font-bold transition ${
+          className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold transition ${
             activeView === 'leaders_kpi'
               ? 'text-indigo-700 bg-indigo-50/80'
               : 'text-slate-500'
           }`}
         >
-          <BarChart3 className="w-4 h-4 mb-0.5" />
-          <span>مؤشرات الرواد</span>
+          <BarChart3 className="w-4 h-4 mb-0.5 shrink-0" />
+          <span className="truncate max-w-full">المؤشرات</span>
         </button>
 
         {!isViewerOnly && (
@@ -306,16 +306,16 @@ export const Navbar: React.FC<NavbarProps> = ({
                   onOpenLogin?.('leader');
                 }
               }}
-              className={`relative flex flex-col items-center justify-center py-1.5 rounded-xl text-[10px] font-bold transition ${
+              className={`relative flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold transition ${
                 activeView === 'leader_portal'
                   ? 'text-blue-600 bg-blue-50/80'
                   : 'text-slate-500'
               }`}
             >
-              <ClipboardCheck className="w-4 h-4 mb-0.5" />
-              <span>رائد المبنى</span>
+              <ClipboardCheck className="w-4 h-4 mb-0.5 shrink-0" />
+              <span className="truncate max-w-full">رائد المبنى</span>
               {pendingEvaluationCount > 0 && (
-                <span className="absolute top-1 left-4 w-4 h-4 rounded-full bg-purple-600 text-white text-[9px] flex items-center justify-center">
+                <span className="absolute top-1 left-2 w-4 h-4 rounded-full bg-purple-600 text-white text-[9px] flex items-center justify-center">
                   {pendingEvaluationCount}
                 </span>
               )}
@@ -330,14 +330,16 @@ export const Navbar: React.FC<NavbarProps> = ({
                   onOpenLogin?.('maintenance');
                 }
               }}
-              className={`flex flex-col items-center justify-center py-1.5 rounded-xl text-[10px] font-bold transition ${
+              className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold transition ${
                 activeView === 'maintenance_portal'
                   ? 'text-emerald-700 bg-emerald-50/80'
                   : 'text-slate-500'
               }`}
             >
-              <Wrench className="w-4 h-4 mb-0.5" />
-              <span>{maintenanceAuth?.role === 'cleaning' ? 'النظافة' : 'الصيانة'}</span>
+              <Wrench className="w-4 h-4 mb-0.5 shrink-0" />
+              <span className="truncate max-w-full">
+                {maintenanceAuth?.role === 'cleaning' ? 'النظافة' : 'الصيانة'}
+              </span>
             </button>
           </>
         )}
@@ -346,23 +348,23 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             type="button"
             onClick={() => onNavigate('admin_panel')}
-            className={`flex flex-col items-center justify-center py-1.5 rounded-xl text-[10px] font-bold transition ${
+            className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold transition ${
               activeView === 'admin_panel'
                 ? 'text-slate-900 bg-slate-100'
                 : 'text-slate-500'
             }`}
           >
-            <Sliders className="w-4 h-4 mb-0.5" />
-            <span>المشرف</span>
+            <Sliders className="w-4 h-4 mb-0.5 shrink-0" />
+            <span className="truncate max-w-full">المشرف</span>
           </button>
         ) : (
           <button
             type="button"
             onClick={onOpenReportModal}
-            className="flex flex-col items-center justify-center py-1.5 rounded-xl text-[10px] font-bold text-slate-500"
+            className="flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold text-slate-500"
           >
-            <FileText className="w-4 h-4 mb-0.5" />
-            <span>التقرير</span>
+            <FileText className="w-4 h-4 mb-0.5 shrink-0" />
+            <span className="truncate max-w-full">التقرير</span>
           </button>
         )}
       </nav>
