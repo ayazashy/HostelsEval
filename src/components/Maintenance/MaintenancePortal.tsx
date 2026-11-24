@@ -20,15 +20,18 @@ import {
   isCleaningOrPestTicket,
   getZoneNameAr,
   getZoneNameEn,
+  getFixtureTypeFilterLabel,
 } from '../../config/facilityTemplates';
 import {
   updateMaximoTicketInfo,
+  startMaintenanceTicketWork,
   closeMaintenanceTicket,
   appendFacilityChatMessage,
   fetchFacilityMediaOnDemand,
 } from '../../services/firestoreService';
 import { processFacilityMediaFile, compressAndWatermarkImage } from '../../utils/imageCompressor';
-import { ImageViewerModal } from '../Common/ImageViewerModal';
+import { ImageViewerModal, MediaGalleryEntry } from '../Common/ImageViewerModal';
+import { OnDemandPhotoSlot } from '../Common/OnDemandPhotoSlot';
 import {
   Wrench,
   Copy,
@@ -50,9 +53,10 @@ import {
   Send,
   Sparkles,
   ExternalLink,
-  Eye,
   Download,
   ChevronDown,
+  PlayCircle,
+  Filter,
   X,
 } from 'lucide-react';
 
@@ -76,19 +80,25 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
   // Admin can toggle between Maintenance Portal and Cleaning/Pest Portal; staff are locked to their own portal
   const [activeTrack, setActiveTrack] = useState<'maintenance' | 'cleaning'>(portalRole);
   const [selectedDepartment, setSelectedDepartment] = useState<'ALL' | ServiceDepartment>('ALL');
+  const [selectedFixtureType, setSelectedFixtureType] = useState<string>('ALL');
   const [selectedBuildingId, setSelectedBuildingId] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<
-    'active' | 'reopened' | 'pending_eval' | 'verified' | 'all'
-  >('active');
+    'new' | 'in_progress' | 'reopened' | 'pending_eval' | 'verified' | 'all'
+  >('new');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [previewGallery, setPreviewGallery] = useState<{
+    items: MediaGalleryEntry[];
+    initialIndex: number;
+    title: string;
+  } | null>(null);
 
   // Per-ticket editing state for Maximo # & URL & attachment
   const [maximoInputs, setMaximoInputs] = useState<Record<string, string>>({});
   const [maximoUrlInputs, setMaximoUrlInputs] = useState<Record<string, string>>({});
   const [savingTicketId, setSavingTicketId] = useState<string | null>(null);
+  const [startingTicketId, setStartingTicketId] = useState<string | null>(null);
   const [uploadingAttachmentId, setUploadingAttachmentId] = useState<string | null>(null);
 
   // Closing Ticket Modal State
@@ -121,19 +131,107 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
   React.useEffect(() => {
     setActiveTrack(portalRole);
     setSelectedDepartment('ALL');
+    setSelectedFixtureType('ALL');
     setVisibleCount(20);
   }, [portalRole]);
 
   React.useEffect(() => {
     setVisibleCount(20);
-  }, [selectedDepartment, selectedBuildingId, statusFilter, searchQuery]);
+  }, [selectedDepartment, selectedFixtureType, selectedBuildingId, statusFilter, searchQuery]);
+
+  /**
+   * Builds unified gallery entries from a loaded vault & ticket so clicking any photo opens
+   * ALL attached photos (Before #1..#N, After, Rejection, Image Attachments) with next/prev navigation.
+   */
+  const buildTicketGalleryEntries = (
+    item: FixtureEvaluation,
+    vault: FacilityMediaVaultDoc
+  ): {
+    entries: MediaGalleryEntry[];
+    beforeCount: number;
+    afterIndex: number;
+    rejectionIndex: number;
+    maximoImgIndex: number;
+  } => {
+    const entries: MediaGalleryEntry[] = [];
+    const mediaList =
+      vault.media && vault.media.length > 0
+        ? vault.media
+        : vault.photoBase64
+        ? [
+            {
+              id: 'primary',
+              type: 'image' as const,
+              url: vault.photoBase64,
+              capturedAt: vault.updatedAt,
+            },
+          ]
+        : [];
+
+    mediaList.forEach((m, idx) => {
+      if (m?.url) {
+        entries.push({
+          url: m.url,
+          type: m.type || 'image',
+          name: m.name,
+          label:
+            mediaList.length > 1
+              ? `صورة البلاغ قبل الإصلاح (#${idx + 1})`
+              : 'صورة البلاغ قبل الإصلاح',
+        });
+      }
+    });
+
+    const beforeCount = entries.length;
+    let afterIndex = -1;
+    let rejectionIndex = -1;
+    let maximoImgIndex = -1;
+
+    const afterUrl = vault.closurePhotoBase64 || item.maintenanceTicket?.closurePhotoBase64;
+    if (afterUrl) {
+      afterIndex = entries.length;
+      entries.push({
+        url: afterUrl,
+        type: 'image',
+        label: 'صورة الصيانة بعد الإصلاح (After)',
+      });
+    }
+
+    const rejUrl =
+      vault.lastRejectionPhotoBase64 || item.maintenanceTicket?.lastRejectionPhotoBase64;
+    if (rejUrl) {
+      rejectionIndex = entries.length;
+      entries.push({
+        url: rejUrl,
+        type: 'image',
+        label: 'صورة إثبات رفض الإغلاق من رائد المبنى',
+      });
+    }
+
+    const maxUrl = vault.maximoAttachmentBase64 || item.maintenanceTicket?.maximoAttachmentBase64;
+    const maxType = vault.maximoAttachmentType || item.maintenanceTicket?.maximoAttachmentType;
+    if (maxUrl && maxType !== 'pdf' && !maxUrl.startsWith('data:application/pdf')) {
+      maximoImgIndex = entries.length;
+      entries.push({
+        url: maxUrl,
+        type: 'image',
+        name: vault.maximoAttachmentName || item.maintenanceTicket?.maximoAttachmentName,
+        label: `مرفق ماكسمو: ${
+          vault.maximoAttachmentName || item.maintenanceTicket?.maximoAttachmentName || ''
+        }`,
+      });
+    }
+
+    return { entries, beforeCount, afterIndex, rejectionIndex, maximoImgIndex };
+  };
 
   const handleLoadOnDemandAttachment = async (
     item: FixtureEvaluation,
     target: 'before' | 'after' | 'rejection' | 'maximo' | 'chat',
+    beforeIndex: number = 0,
     historyEventId?: string
   ) => {
-    const key = `${item.id}_${target}_${historyEventId || ''}`;
+    const key = `${item.id}_${target}_${beforeIndex}_${historyEventId || ''}`;
     setLoadingMediaKey(key);
     try {
       let vault: FacilityMediaVaultDoc | null = loadedMediaByFixtureId[item.id] || null;
@@ -152,28 +250,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
         return;
       }
 
-      if (target === 'before') {
-        const imgUrl =
-          vault.photoBase64 ||
-          vault.media?.find((m) => m.type === 'image')?.url ||
-          item.photoBase64;
-        if (imgUrl) {
-          setPreviewImage(imgUrl);
-        } else if (vault.media && vault.media[0]?.url) {
-          const first = vault.media[0];
-          const a = document.createElement('a');
-          a.href = first.url;
-          a.download = first.name || `${item.id}_attachment`;
-          a.click();
-        }
-      } else if (target === 'after') {
-        const afterUrl = vault.closurePhotoBase64 || item.maintenanceTicket?.closurePhotoBase64;
-        if (afterUrl) setPreviewImage(afterUrl);
-      } else if (target === 'rejection') {
-        const rejUrl =
-          vault.lastRejectionPhotoBase64 || item.maintenanceTicket?.lastRejectionPhotoBase64;
-        if (rejUrl) setPreviewImage(rejUrl);
-      } else if (target === 'maximo') {
+      if (target === 'maximo') {
         const maxUrl =
           vault.maximoAttachmentBase64 || item.maintenanceTicket?.maximoAttachmentBase64;
         const maxType =
@@ -182,21 +259,57 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
           vault.maximoAttachmentName ||
           item.maintenanceTicket?.maximoAttachmentName ||
           `Maximo_${item.maintenanceTicket?.maximoNumber || item.id}.pdf`;
-        if (maxUrl) {
-          if (maxType === 'pdf' || maxUrl.startsWith('data:application/pdf')) {
-            const a = document.createElement('a');
-            a.href = maxUrl;
-            a.download = maxName;
-            a.click();
-          } else {
-            setPreviewImage(maxUrl);
-          }
+        if (maxUrl && (maxType === 'pdf' || maxUrl.startsWith('data:application/pdf'))) {
+          const a = document.createElement('a');
+          a.href = maxUrl;
+          a.download = maxName;
+          a.click();
+          return;
         }
-      } else if (target === 'chat' && historyEventId) {
-        const evMedia = vault.historyMediaById?.[historyEventId];
-        const firstImg = evMedia?.find((m) => m.type === 'image')?.url || vault.photoBase64;
-        if (firstImg) setPreviewImage(firstImg);
       }
+
+      if (target === 'chat' && historyEventId) {
+        const evMedia = vault.historyMediaById?.[historyEventId] || [];
+        const chatEntries: MediaGalleryEntry[] = evMedia
+          .filter((m) => !!m?.url)
+          .map((m, idx) => ({
+            url: m.url,
+            type: m.type || 'image',
+            name: m.name,
+            label: evMedia.length > 1 ? `مرفق المحادثة (#${idx + 1})` : 'مرفق المحادثة',
+          }));
+        if (chatEntries.length > 0) {
+          setPreviewGallery({
+            items: chatEntries,
+            initialIndex: Math.max(0, Math.min(beforeIndex, chatEntries.length - 1)),
+            title: `مرفقات محادثة ${item.id}`,
+          });
+          return;
+        }
+      }
+
+      const built = buildTicketGalleryEntries(item, vault);
+      if (built.entries.length === 0) {
+        alert('لا توجد صور أو وسائط محفوظة لهذا البلاغ.');
+        return;
+      }
+
+      let targetIdx = 0;
+      if (target === 'before') {
+        targetIdx = Math.max(0, Math.min(beforeIndex, Math.max(0, built.beforeCount - 1)));
+      } else if (target === 'after' && built.afterIndex >= 0) {
+        targetIdx = built.afterIndex;
+      } else if (target === 'rejection' && built.rejectionIndex >= 0) {
+        targetIdx = built.rejectionIndex;
+      } else if (target === 'maximo' && built.maximoImgIndex >= 0) {
+        targetIdx = built.maximoImgIndex;
+      }
+
+      setPreviewGallery({
+        items: built.entries,
+        initialIndex: targetIdx,
+        title: `شواهد المرفق (${item.id})`,
+      });
     } finally {
       setLoadingMediaKey(null);
     }
@@ -206,22 +319,23 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
   const isCleaningMode = effectiveTrack === 'cleaning';
   const categories = React.useMemo(() => loadActiveFacilityCategories(), []);
 
-  const getFixtureBilingualName = (
-    item: FixtureEvaluation
-  ): { ar: string; en: string } => {
-    const cat = categories.find((c) => c.code === item.categoryCode);
-    const tmpl =
-      cat?.wingTemplates[item.wingId]?.find((t) => t.typeCode === item.fixtureTypeCode) ||
-      cat?.wingTemplates[1]?.find((t) => t.typeCode === item.fixtureTypeCode);
-    return {
-      ar: tmpl
-        ? `${tmpl.nameAr} (#${item.fixtureIndex})`
-        : `${item.fixtureTypeCode} (#${item.fixtureIndex})`,
-      en: tmpl
-        ? `${tmpl.nameEn} (#${item.fixtureIndex})`
-        : `${item.fixtureTypeCode} (#${item.fixtureIndex})`,
-    };
-  };
+  const getFixtureBilingualName = React.useCallback(
+    (item: FixtureEvaluation): { ar: string; en: string } => {
+      const cat = categories.find((c) => c.code === item.categoryCode);
+      const tmpl =
+        cat?.wingTemplates[item.wingId]?.find((t) => t.typeCode === item.fixtureTypeCode) ||
+        cat?.wingTemplates[1]?.find((t) => t.typeCode === item.fixtureTypeCode);
+      return {
+        ar: tmpl
+          ? `${tmpl.nameAr} (#${item.fixtureIndex})`
+          : `${item.fixtureTypeCode} (#${item.fixtureIndex})`,
+        en: tmpl
+          ? `${tmpl.nameEn} (#${item.fixtureIndex})`
+          : `${item.fixtureTypeCode} (#${item.fixtureIndex})`,
+      };
+    },
+    [categories]
+  );
 
   // Strict Track Isolation: Cleaning portal ONLY sees Cleaning/Pest tickets; Maintenance portal ONLY sees Maintenance tickets
   const trackTickets = React.useMemo(() => {
@@ -254,8 +368,67 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
     return map;
   }, [trackTickets]);
 
+  // Determines whether an active open/in_progress ticket has already been acted upon (Maximo #/URL/Attachment or tech work started)
+  const hasStartedMaintenanceAction = (item: FixtureEvaluation): boolean => {
+    const t = item.maintenanceTicket;
+    if (!t) return false;
+    if (t.status === 'in_progress') return true;
+    const maxNum = (t.maximoNumber || '').trim();
+    if (maxNum && maxNum !== 'قيد التسجيل') return true;
+    if (t.maximoUrl && t.maximoUrl.trim()) return true;
+    if (t.hasMaximoAttachment || t.maximoAttachmentBase64) return true;
+    if (t.registeredAt) return true;
+    if (
+      Array.isArray(item.history) &&
+      item.history.some(
+        (h) =>
+          h.action === 'maximo_registered' ||
+          h.actorRole === 'maintenance' ||
+          h.actorRole === 'cleaning'
+      )
+    ) {
+      return true;
+    }
+    return false;
+  };
+
+  type TicketBucket = 'new' | 'in_progress' | 'reopened' | 'pending_eval' | 'verified';
+
+  const getTicketBucket = (item: FixtureEvaluation): TicketBucket => {
+    const st =
+      item.maintenanceTicket?.status ||
+      (item.status !== 'operational' ? 'open' : 'verified_closed');
+    if (st === 'reopened') return 'reopened';
+    if (st === 'pending_evaluation') return 'pending_eval';
+    if (st === 'verified_closed' || item.status === 'operational') return 'verified';
+    return hasStartedMaintenanceAction(item) ? 'in_progress' : 'new';
+  };
+
+  // Fixture Type options with counts filtered by active track & department
+  const fixtureTypeOptions = React.useMemo(() => {
+    const map = new Map<string, { code: string; ar: string; en: string; count: number }>();
+    for (const item of trackTickets) {
+      if (
+        selectedDepartment !== 'ALL' &&
+        resolveEvaluationDepartment(item) !== selectedDepartment
+      ) {
+        continue;
+      }
+      const code = (item.fixtureTypeCode || 'OTH').toUpperCase();
+      const labels = getFixtureTypeFilterLabel(code, categories);
+      const existing = map.get(code);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        map.set(code, { code, ar: labels.ar, en: labels.en, count: 1 });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.count - a.count);
+  }, [trackTickets, selectedDepartment, categories]);
+
   const counts = React.useMemo(() => {
-    let active = 0;
+    let newTickets = 0;
+    let inProgress = 0;
     let reopened = 0;
     let pendingEval = 0;
     let verified = 0;
@@ -264,15 +437,28 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
       if (selectedDepartment !== 'ALL' && resolveEvaluationDepartment(t) !== selectedDepartment) {
         continue;
       }
-      const st =
-        t.maintenanceTicket?.status || (t.status !== 'operational' ? 'open' : 'verified_closed');
-      if (st === 'reopened') reopened++;
-      else if (st === 'pending_evaluation') pendingEval++;
-      else if (st === 'verified_closed' || t.status === 'operational') verified++;
-      else active++;
+      if (
+        selectedFixtureType !== 'ALL' &&
+        (t.fixtureTypeCode || '').toUpperCase() !== selectedFixtureType
+      ) {
+        continue;
+      }
+      const bucket = getTicketBucket(t);
+      if (bucket === 'new') newTickets++;
+      else if (bucket === 'in_progress') inProgress++;
+      else if (bucket === 'reopened') reopened++;
+      else if (bucket === 'pending_eval') pendingEval++;
+      else if (bucket === 'verified') verified++;
     }
-    return { active, reopened, pendingEval, verified, total: active + reopened + pendingEval + verified };
-  }, [trackTickets, selectedDepartment]);
+    return {
+      newTickets,
+      inProgress,
+      reopened,
+      pendingEval,
+      verified,
+      total: newTickets + inProgress + reopened + pendingEval + verified,
+    };
+  }, [trackTickets, selectedDepartment, selectedFixtureType]);
 
   const filteredTickets = React.useMemo(() => {
     return trackTickets.filter((item) => {
@@ -283,35 +469,58 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
         return false;
       }
 
+      if (
+        selectedFixtureType !== 'ALL' &&
+        (item.fixtureTypeCode || '').toUpperCase() !== selectedFixtureType
+      ) {
+        return false;
+      }
+
       if (selectedBuildingId !== 'ALL' && item.buildingId !== selectedBuildingId) {
         return false;
       }
 
-      const st =
-        item.maintenanceTicket?.status ||
-        (item.status !== 'operational' ? 'open' : 'verified_closed');
-
-      if (statusFilter === 'active' && st !== 'open' && st !== 'in_progress' && st !== 'reopened') {
-        return false;
-      }
-      if (statusFilter === 'reopened' && st !== 'reopened') return false;
-      if (statusFilter === 'pending_eval' && st !== 'pending_evaluation') return false;
-      if (statusFilter === 'verified' && st !== 'verified_closed' && item.status !== 'operational') {
+      const bucket = getTicketBucket(item);
+      if (statusFilter !== 'all' && bucket !== statusFilter) {
         return false;
       }
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
+        const names = getFixtureBilingualName(item);
         const matchId = item.id.toLowerCase().includes(q);
         const matchBld = item.buildingId.toLowerCase().includes(q);
         const matchMax = (item.maintenanceTicket?.maximoNumber || '').toLowerCase().includes(q);
         const matchNotes = (item.notes || '').toLowerCase().includes(q);
-        if (!matchId && !matchBld && !matchMax && !matchNotes) return false;
+        const matchType =
+          names.ar.toLowerCase().includes(q) || names.en.toLowerCase().includes(q);
+        if (!matchId && !matchBld && !matchMax && !matchNotes && !matchType) return false;
       }
 
       return true;
     });
-  }, [trackTickets, selectedDepartment, selectedBuildingId, statusFilter, searchQuery]);
+  }, [
+    trackTickets,
+    selectedDepartment,
+    selectedFixtureType,
+    selectedBuildingId,
+    statusFilter,
+    searchQuery,
+    getFixtureBilingualName,
+  ]);
+
+  const handleStartTicketWork = async (item: FixtureEvaluation) => {
+    setStartingTicketId(item.id);
+    try {
+      await startMaintenanceTicketWork(item, {
+        actorName: technicianName,
+        actorRole: isCleaningMode ? 'cleaning' : isAdmin ? 'admin' : 'maintenance',
+      });
+      onRefreshEvaluations();
+    } finally {
+      setStartingTicketId(null);
+    }
+  };
 
   // Format bilingual summary so technicians or Maximo operators can copy it in 1 click
   const handleCopyTicketSummary = (item: FixtureEvaluation) => {
@@ -620,30 +829,44 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
         </div>
 
         {/* Summary Counters */}
-        <div className="grid grid-cols-3 sm:flex items-center gap-2 text-xs">
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 text-xs">
           <div className="bg-amber-50 border border-amber-200 px-3 py-2 rounded-xl text-center">
             <span className="block font-black text-amber-800 font-mono text-base">
-              {counts.active + counts.reopened}
+              {counts.newTickets}
             </span>
-            <span className="text-[10px] text-amber-700 font-bold">بلاغات نشطة / Active</span>
+            <span className="text-[10px] text-amber-800 font-bold leading-tight block">
+              بلاغات جديدة / New
+            </span>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 px-3 py-2 rounded-xl text-center">
+            <span className="block font-black text-blue-800 font-mono text-base">
+              {counts.inProgress}
+            </span>
+            <span className="text-[10px] text-blue-800 font-bold leading-tight block">
+              يتم العمل عليها / In Progress
+            </span>
           </div>
           <div className="bg-purple-50 border border-purple-200 px-3 py-2 rounded-xl text-center">
             <span className="block font-black text-purple-800 font-mono text-base">
               {counts.pendingEval}
             </span>
-            <span className="text-[10px] text-purple-700 font-bold">بانتظار اعتماد الرائد</span>
+            <span className="text-[10px] text-purple-800 font-bold leading-tight block">
+              بانتظار اعتماد الرائد
+            </span>
           </div>
           <div className="bg-emerald-50 border border-emerald-200 px-3 py-2 rounded-xl text-center">
             <span className="block font-black text-emerald-800 font-mono text-base">
               {counts.verified}
             </span>
-            <span className="text-[10px] text-emerald-700 font-bold">مغلقة ومعتمدة</span>
+            <span className="text-[10px] text-emerald-800 font-bold leading-tight block">
+              مغلقة ومعتمدة
+            </span>
           </div>
         </div>
       </div>
 
       {/* 2. Department Filter Bar (4 Maintenance Departments OR 2 Cleaning/Pest Departments) */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-3 shadow-xs flex items-center gap-2 overflow-x-auto no-scrollbar">
+      <div className="bg-white border border-slate-200 rounded-2xl p-3 shadow-xs flex flex-wrap items-center gap-2">
         {activeDeptTabs.map((tab) => {
           const isSelected = selectedDepartment === tab.id;
           const count = departmentCounts[tab.id] || 0;
@@ -651,21 +874,24 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
             <button
               key={tab.id}
               type="button"
-              onClick={() => setSelectedDepartment(tab.id)}
-              className={`px-3.5 py-2 rounded-xl border text-right transition shrink-0 flex items-center gap-2.5 ${
+              onClick={() => {
+                setSelectedDepartment(tab.id);
+                setSelectedFixtureType('ALL');
+              }}
+              className={`px-3 py-2 rounded-xl border text-right transition flex items-center gap-2 ${
                 isSelected
                   ? 'bg-slate-900 border-slate-900 text-white shadow-xs'
                   : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
               }`}
             >
               <div>
-                <div className="text-xs font-bold">{tab.labelAr}</div>
-                <div className={`text-[10px] ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
+                <div className="text-xs font-bold leading-snug">{tab.labelAr}</div>
+                <div className={`text-[10px] leading-snug ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
                   {tab.labelEn}
                 </div>
               </div>
               <span
-                className={`px-2 py-0.5 rounded-lg text-xs font-mono font-black ${
+                className={`px-2 py-0.5 rounded-lg text-xs font-mono font-black shrink-0 ${
                   isSelected ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-800'
                 }`}
               >
@@ -676,30 +902,102 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
         })}
       </div>
 
+      {/* 2b. Facility / Fixture Type Filter Chips (مراوش، مراحيض، مغاسل، سخانات...) */}
+      {fixtureTypeOptions.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-3 shadow-xs flex flex-col gap-2">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+              <Filter className="w-3.5 h-3.5 text-blue-600" />
+              <span>تصفية حسب نوع المرفق (المراوش، المراحيض، المغاسل، ...):</span>
+            </span>
+            {selectedFixtureType !== 'ALL' && (
+              <button
+                type="button"
+                onClick={() => setSelectedFixtureType('ALL')}
+                className="text-[11px] font-bold text-blue-700 hover:underline"
+              >
+                إظهار جميع أنواع المرافق
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setSelectedFixtureType('ALL')}
+              className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold border transition ${
+                selectedFixtureType === 'ALL'
+                  ? 'bg-blue-600 border-blue-600 text-white shadow-xs'
+                  : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              جميع المرافق ({departmentCounts[selectedDepartment] || trackTickets.length})
+            </button>
+
+            {fixtureTypeOptions.map((opt) => {
+              const active = selectedFixtureType === opt.code;
+              return (
+                <button
+                  key={opt.code}
+                  type="button"
+                  onClick={() => setSelectedFixtureType(opt.code)}
+                  className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold border transition flex items-center gap-1.5 ${
+                    active
+                      ? 'bg-blue-600 border-blue-600 text-white shadow-xs'
+                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  <span>{opt.ar}</span>
+                  <span
+                    className={`px-1.5 py-0.2 rounded-md font-mono text-[10px] font-black ${
+                      active ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-800'
+                    }`}
+                  >
+                    {opt.count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* 3. Status & Building Filters Bar */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-3.5 shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-        {/* Status Tabs */}
-        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 md:pb-0">
+      <div className="bg-white border border-slate-200 rounded-2xl p-3.5 shadow-xs flex flex-col gap-3">
+        {/* Status Tabs (Split cleanly into New vs In Progress) */}
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
-            onClick={() => setStatusFilter('active')}
-            className={`px-3 py-2 rounded-xl text-xs font-bold shrink-0 transition ${
-              statusFilter === 'active'
-                ? 'bg-slate-900 text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            onClick={() => setStatusFilter('new')}
+            className={`px-3 py-2 rounded-xl text-xs font-bold transition ${
+              statusFilter === 'new'
+                ? 'bg-amber-600 text-white shadow-xs'
+                : 'bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100'
             }`}
           >
-            قيد العمل / Active ({counts.active + counts.reopened})
+            بلاغات جديدة / New ({counts.newTickets})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setStatusFilter('in_progress')}
+            className={`px-3 py-2 rounded-xl text-xs font-bold transition ${
+              statusFilter === 'in_progress'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'bg-blue-50 text-blue-800 border border-blue-200 hover:bg-blue-100'
+            }`}
+          >
+            بلاغات يتم العمل عليها / In Progress ({counts.inProgress})
           </button>
 
           {counts.reopened > 0 && (
             <button
               type="button"
               onClick={() => setStatusFilter('reopened')}
-              className={`px-3 py-2 rounded-xl text-xs font-bold shrink-0 transition flex items-center gap-1 ${
+              className={`px-3 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
                 statusFilter === 'reopened'
-                  ? 'bg-rose-600 text-white'
-                  : 'bg-rose-50 text-rose-700 border border-rose-200'
+                  ? 'bg-rose-600 text-white shadow-xs'
+                  : 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100'
               }`}
             >
               <RotateCcw className="w-3.5 h-3.5" />
@@ -710,10 +1008,10 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
           <button
             type="button"
             onClick={() => setStatusFilter('pending_eval')}
-            className={`px-3 py-2 rounded-xl text-xs font-bold shrink-0 transition ${
+            className={`px-3 py-2 rounded-xl text-xs font-bold transition ${
               statusFilter === 'pending_eval'
-                ? 'bg-purple-700 text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                ? 'bg-purple-700 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >
             بانتظار اعتماد الرائد ({counts.pendingEval})
@@ -722,10 +1020,10 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
           <button
             type="button"
             onClick={() => setStatusFilter('verified')}
-            className={`px-3 py-2 rounded-xl text-xs font-bold shrink-0 transition ${
+            className={`px-3 py-2 rounded-xl text-xs font-bold transition ${
               statusFilter === 'verified'
-                ? 'bg-emerald-600 text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >
             معتمدة نهائياً ({counts.verified})
@@ -734,10 +1032,10 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
           <button
             type="button"
             onClick={() => setStatusFilter('all')}
-            className={`px-3 py-2 rounded-xl text-xs font-bold shrink-0 transition ${
+            className={`px-3 py-2 rounded-xl text-xs font-bold transition ${
               statusFilter === 'all'
-                ? 'bg-blue-600 text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                ? 'bg-slate-900 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >
             الكل ({counts.total})
@@ -745,13 +1043,13 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
         </div>
 
         {/* Building Filter + Search */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-2 border-t border-slate-100">
           <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5">
-            <Building2 className="w-4 h-4 text-slate-400" />
+            <Building2 className="w-4 h-4 text-slate-400 shrink-0" />
             <select
               value={selectedBuildingId}
               onChange={(e) => setSelectedBuildingId(e.target.value)}
-              className="bg-transparent text-xs font-bold text-slate-900 focus:outline-none cursor-pointer"
+              className="bg-transparent text-xs font-bold text-slate-900 focus:outline-none cursor-pointer w-full sm:w-auto"
             >
               <option value="ALL">جميع المباني (34 Buildings)</option>
               {buildings.map((b) => (
@@ -762,13 +1060,13 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
             </select>
           </div>
 
-          <div className="relative flex-1 sm:w-52">
+          <div className="relative flex-1">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="بحث برقم البلاغ أو المرفق..."
+              placeholder="بحث برقم البلاغ أو ماكسمو أو نوع المرفق..."
               className="w-full pr-8 pl-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none"
             />
           </div>
@@ -793,6 +1091,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
               const ticket = item.maintenanceTicket;
               const ticketStatus =
                 ticket?.status || (item.status !== 'operational' ? 'open' : 'verified_closed');
+              const ticketBucket = getTicketBucket(item);
               const names = getFixtureBilingualName(item);
               const deptKey = resolveEvaluationDepartment(item);
               const deptInfo = SERVICE_DEPARTMENTS[deptKey];
@@ -817,65 +1116,81 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                 ticket?.hasMaximoAttachment || ticket?.maximoAttachmentBase64
               );
               const loadedVault = loadedMediaByFixtureId[item.id];
+              const beforeSlotsMeta =
+                loadedVault?.media && loadedVault.media.length > 0
+                  ? loadedVault.media
+                  : item.mediaMeta && item.mediaMeta.length > 0
+                  ? item.mediaMeta
+                  : Array.from(
+                      { length: item.mediaCount || (hasBeforeMedia ? 1 : 0) },
+                      (_, i) => ({
+                        id: `slot_${i}`,
+                        type: 'image' as const,
+                        name: undefined,
+                        capturedAt: item.updatedAt,
+                      })
+                    );
 
             return (
               <div
                 key={item.id}
-                className={`bg-white rounded-2xl border p-4 shadow-xs flex flex-col justify-between gap-3.5 ${
+                className={`bg-white rounded-2xl border overflow-hidden shadow-xs flex flex-col justify-between ${
                   ticketStatus === 'reopened'
                     ? 'border-rose-400 ring-1 ring-rose-200'
                     : ticketStatus === 'pending_evaluation'
                     ? 'border-purple-300'
                     : ticketStatus === 'verified_closed'
                     ? 'border-emerald-200'
+                    : ticketBucket === 'in_progress'
+                    ? 'border-blue-300'
                     : 'border-slate-200'
                 }`}
               >
                 {/* Top Section: Bilingual Location, Department Badge, Chat Button & Copy */}
-                <div className="flex flex-col gap-2.5">
+                <div className="p-4 flex flex-col gap-2.5">
                   <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-100 pb-2.5">
-                    <div>
+                    <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-xs font-bold">
+                        <span className="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-[11px] font-bold leading-snug">
                           مبنى {item.buildingId.replace('B', '')} ({item.buildingId}) • الدور{' '}
                           {item.floor} • {getZoneNameAr(item.wingId, true)}
                         </span>
                         <span
-                          className={`text-[11px] px-2 py-0.5 rounded-lg font-bold border ${deptInfo.badgeClass}`}
+                          className={`text-[11px] px-2 py-0.5 rounded-lg font-bold border leading-snug ${deptInfo.badgeClass}`}
                         >
                           {deptInfo.nameAr} • {deptInfo.nameEn}
                         </span>
                         <span
-                          className={`text-[11px] px-2 py-0.5 rounded-lg font-bold ${
-                            ticketStatus === 'reopened'
+                          className={`text-[11px] px-2 py-0.5 rounded-lg font-bold leading-snug ${
+                            ticketBucket === 'reopened'
                               ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                              : ticketStatus === 'pending_evaluation'
+                              : ticketBucket === 'pending_eval'
                               ? 'bg-purple-100 text-purple-800 border border-purple-300'
-                              : ticketStatus === 'verified_closed'
+                              : ticketBucket === 'verified'
                               ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                              : ticketStatus === 'in_progress'
+                              : ticketBucket === 'in_progress'
                               ? 'bg-blue-100 text-blue-800 border border-blue-300'
                               : 'bg-amber-100 text-amber-800 border border-amber-300'
                           }`}
                         >
-                          {ticketStatus === 'reopened'
+                          {ticketBucket === 'reopened'
                             ? 'معاد فتحه / Reopened'
-                            : ticketStatus === 'pending_evaluation'
+                            : ticketBucket === 'pending_eval'
                             ? 'بانتظار اعتماد الرائد'
-                            : ticketStatus === 'verified_closed'
+                            : ticketBucket === 'verified'
                             ? 'معتمد ومغلق'
-                            : ticketStatus === 'in_progress'
-                            ? 'قيد التنفيذ / In Progress'
-                            : 'بلاغ جديد / Open'}
+                            : ticketBucket === 'in_progress'
+                            ? 'يتم العمل عليه / In Progress'
+                            : 'بلاغ جديد / New'}
                         </span>
                       </div>
 
                       <div className="mt-1.5">
-                        <h3 className="text-sm font-bold text-slate-900">
+                        <h3 className="text-sm font-bold text-slate-900 leading-snug">
                           {names.ar}{' '}
                           <span className="text-xs font-mono text-slate-500">({item.id})</span>
                         </h3>
-                        <p className="text-xs font-semibold text-slate-500">
+                        <p className="text-xs font-semibold text-slate-500 leading-snug mt-0.5">
                           Building {item.buildingId.replace('B', '')} • Floor {item.floor} •{' '}
                           {getZoneNameEn(item.wingId)} — {names.en}
                         </p>
@@ -883,7 +1198,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                     </div>
 
                     {/* Chat Thread Button + Copy Summary Button */}
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
                       <button
                         type="button"
                         onClick={() => setChatItem(item)}
@@ -917,26 +1232,24 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
 
                   {/* Reopened Rejection Alert if Leader rejected closure */}
                   {ticketStatus === 'reopened' && ticket?.lastRejectionReason && (
-                    <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-900 flex flex-col gap-1">
+                    <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-900 flex flex-col gap-2">
                       <span className="font-bold flex items-center gap-1 text-rose-700">
-                        <AlertTriangle className="w-4 h-4" />
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
                         <span>سبب رفض الإغلاق من رائد المبنى (Reopened by Leader):</span>
                       </span>
-                      <p>{ticket.lastRejectionReason}</p>
+                      <p className="leading-relaxed">{ticket.lastRejectionReason}</p>
                       {hasRejectionMedia && (
-                        <button
-                          type="button"
-                          onClick={() => handleLoadOnDemandAttachment(item, 'rejection')}
-                          disabled={loadingMediaKey === `${item.id}_rejection_`}
-                          className="self-start mt-1 px-2.5 py-1 rounded-lg bg-rose-100 hover:bg-rose-200 border border-rose-300 text-[11px] font-bold text-rose-800 inline-flex items-center gap-1.5 transition"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span>
-                            {loadingMediaKey === `${item.id}_rejection_`
-                              ? 'جاري تحميل الصورة...'
-                              : 'عرض صورة إثبات عدم الإصلاح (عند الطلب)'}
-                          </span>
-                        </button>
+                        <OnDemandPhotoSlot
+                          loadedUrl={
+                            loadedVault?.lastRejectionPhotoBase64 ||
+                            ticket.lastRejectionPhotoBase64
+                          }
+                          badgeLabel="إثبات الرفض"
+                          badgeTone="rose"
+                          sizeClass="w-20 h-20"
+                          isLoading={loadingMediaKey === `${item.id}_rejection_0_`}
+                          onClick={() => handleLoadOnDemandAttachment(item, 'rejection', 0)}
+                        />
                       )}
                     </div>
                   )}
@@ -950,11 +1263,11 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                           key={d}
                           className="px-2.5 py-1 rounded-xl bg-rose-50/70 text-slate-900 border border-rose-200 flex flex-col"
                         >
-                          <span className="text-xs font-bold text-rose-900">
+                          <span className="text-xs font-bold text-rose-900 leading-snug">
                             {tag ? tag.labelAr : d}
                           </span>
                           {tag?.labelEn && (
-                            <span className="text-[10px] font-semibold text-slate-600">
+                            <span className="text-[10px] font-semibold text-slate-600 leading-snug">
                               {tag.labelEn}
                             </span>
                           )}
@@ -964,67 +1277,60 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                   </div>
 
                   {item.notes && (
-                    <p className="text-xs text-slate-700 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                    <p className="text-xs text-slate-700 bg-slate-50 p-2.5 rounded-xl border border-slate-200 leading-relaxed">
                       <strong>توضيح إضافي / Note:</strong> {item.notes}
                     </p>
                   )}
 
-                  {/* On-Demand Before / After Media Loader Buttons (No Eager Base64 Rendering!) */}
-                  {(hasBeforeMedia || hasAfterMedia) && (
-                    <div className="flex flex-wrap items-center gap-2 pt-1">
-                      {hasBeforeMedia && (
-                        <button
-                          type="button"
-                          onClick={() => handleLoadOnDemandAttachment(item, 'before')}
-                          disabled={loadingMediaKey === `${item.id}_before_`}
-                          className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-800 text-xs font-bold inline-flex items-center gap-1.5 transition"
-                        >
-                          <Eye className="w-3.5 h-3.5 text-blue-600" />
-                          <span>
-                            {loadingMediaKey === `${item.id}_before_`
-                              ? 'جاري تحميل الصورة...'
-                              : `عرض صورة العطل قبل الإصلاح (${item.mediaCount || 1})`}
-                          </span>
-                        </button>
-                      )}
+                  {/* On-Demand Photo Thumbnails Strip (Unloaded Photo Frames + Multi-Photo Lightbox) */}
+                  {(beforeSlotsMeta.length > 0 || hasAfterMedia) && (
+                    <div className="flex flex-col gap-1.5 pt-1">
+                      <span className="text-[11px] font-bold text-slate-500">
+                        صور وشواهد المرفق ({beforeSlotsMeta.length + (hasAfterMedia ? 1 : 0)} — اضغط على أي صورة للتحميل والمعاينة):
+                      </span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {beforeSlotsMeta.map((slot, idx) => {
+                          const loadedUrl =
+                            loadedVault?.media?.[idx]?.url ||
+                            (idx === 0 ? loadedVault?.photoBase64 || item.photoBase64 : undefined);
+                          return (
+                            <OnDemandPhotoSlot
+                              key={slot.id || idx}
+                              loadedUrl={loadedUrl}
+                              mediaType={slot.type || 'image'}
+                              badgeLabel={
+                                beforeSlotsMeta.length > 1
+                                  ? `قبل #${idx + 1}`
+                                  : 'قبل الإصلاح'
+                              }
+                              badgeTone="slate"
+                              sizeClass="w-24 h-24"
+                              isLoading={loadingMediaKey === `${item.id}_before_${idx}_`}
+                              onClick={() => handleLoadOnDemandAttachment(item, 'before', idx)}
+                            />
+                          );
+                        })}
 
-                      {hasAfterMedia && (
-                        <button
-                          type="button"
-                          onClick={() => handleLoadOnDemandAttachment(item, 'after')}
-                          disabled={loadingMediaKey === `${item.id}_after_`}
-                          className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs font-bold inline-flex items-center gap-1.5 transition"
-                        >
-                          <Eye className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>
-                            {loadingMediaKey === `${item.id}_after_`
-                              ? 'جاري تحميل الصورة...'
-                              : 'عرض صورة بعد الإصلاح (After)'}
-                          </span>
-                        </button>
-                      )}
-
-                      {/* If user already clicked & loaded this ticket's media into memory, show small clickable thumbnails */}
-                      {loadedVault?.media && loadedVault.media.length > 1 && (
-                        <div className="flex items-center gap-1.5 overflow-x-auto w-full pt-1">
-                          {loadedVault.media.map((m, idx) => (
-                            <button
-                              key={m.id || idx}
-                              type="button"
-                              onClick={() => m.type === 'image' && setPreviewImage(m.url)}
-                              className="px-2 py-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-800 text-[11px] font-bold shrink-0"
-                            >
-                              مرفق #{idx + 1} ({m.type.toUpperCase()})
-                            </button>
-                          ))}
-                        </div>
-                      )}
+                        {hasAfterMedia && (
+                          <OnDemandPhotoSlot
+                            loadedUrl={
+                              loadedVault?.closurePhotoBase64 || ticket?.closurePhotoBase64
+                            }
+                            mediaType="image"
+                            badgeLabel="بعد الإصلاح"
+                            badgeTone="emerald"
+                            sizeClass="w-24 h-24"
+                            isLoading={loadingMediaKey === `${item.id}_after_0_`}
+                            onClick={() => handleLoadOnDemandAttachment(item, 'after', 0)}
+                          />
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
 
-                {/* Bottom Section: Maximo Number (for Maintenance) & Close with Fix Photo */}
-                <div className="pt-3 border-t border-slate-200 flex flex-col gap-2.5 bg-slate-50/70 -mx-4 -mb-4 p-4 rounded-b-2xl">
+                {/* Bottom Section: Maximo Number (for Maintenance), Start Work, & Close with Fix Photo */}
+                <div className="p-4 border-t border-slate-200 flex flex-col gap-2.5 bg-slate-50/70">
                   {/* Maximo Ticket # + Link + Attachment Row (Shown only for Maintenance track) */}
                   {!isCleaningMode && (
                     <div className="flex flex-col gap-2">
@@ -1037,7 +1343,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                               setMaximoInputs((prev) => ({ ...prev, [item.id]: e.target.value }))
                             }
                             placeholder="رقم البلاغ في ماكسمو (Maximo #)..."
-                            className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-900 focus:border-blue-500 focus:outline-none"
+                            className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-900 focus:border-blue-500 focus:outline-none min-w-0"
                           />
                           <button
                             type="button"
@@ -1069,7 +1375,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                       </div>
 
                       {/* Maximo Direct URL Input (visible to Building Leader once linked) */}
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <input
                           type="url"
                           dir="ltr"
@@ -1085,7 +1391,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                             }))
                           }
                           placeholder="رابط البلاغ في ماكسمو (https://...) — يظهر مباشرة لرائد المبنى"
-                          className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-[11px] font-mono text-slate-900 focus:border-blue-500 focus:outline-none text-left"
+                          className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-[11px] font-mono text-slate-900 focus:border-blue-500 focus:outline-none text-left min-w-0"
                         />
                         {ticket?.maximoUrl && (
                           <a
@@ -1104,33 +1410,61 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
 
                   {/* Display existing Maximo Attachment on demand if uploaded */}
                   {!isCleaningMode && hasMaximoMedia && (
-                    <div className="flex items-center justify-between bg-blue-50/80 border border-blue-200 rounded-xl px-3 py-1.5 text-xs">
-                      <div className="flex items-center gap-1.5 text-blue-900 font-bold truncate">
+                    <div className="flex flex-wrap items-center justify-between gap-2 bg-blue-50/80 border border-blue-200 rounded-xl px-3 py-2 text-xs">
+                      <div className="flex items-center gap-2 text-blue-900 font-bold">
                         {ticket?.maximoAttachmentType === 'pdf' ? (
                           <FileText className="w-4 h-4 text-rose-600 shrink-0" />
                         ) : (
-                          <ImageIcon className="w-4 h-4 text-blue-600 shrink-0" />
+                          <OnDemandPhotoSlot
+                            loadedUrl={
+                              loadedVault?.maximoAttachmentBase64 ||
+                              ticket?.maximoAttachmentBase64
+                            }
+                            mediaType="image"
+                            badgeLabel="ماكسمو"
+                            badgeTone="blue"
+                            sizeClass="w-16 h-16"
+                            isLoading={loadingMediaKey === `${item.id}_maximo_0_`}
+                            onClick={() => handleLoadOnDemandAttachment(item, 'maximo', 0)}
+                          />
                         )}
-                        <span className="truncate">
+                        <span className="leading-snug">
                           مرفق ماكسمو: {ticket?.maximoAttachmentName || 'مستند البلاغ'}
                         </span>
                       </div>
                       <button
                         type="button"
-                        onClick={() => handleLoadOnDemandAttachment(item, 'maximo')}
-                        disabled={loadingMediaKey === `${item.id}_maximo_`}
-                        className="text-blue-700 font-bold underline shrink-0 mr-2 inline-flex items-center gap-1"
+                        onClick={() => handleLoadOnDemandAttachment(item, 'maximo', 0)}
+                        disabled={loadingMediaKey === `${item.id}_maximo_0_`}
+                        className="text-blue-700 font-bold underline shrink-0 inline-flex items-center gap-1"
                       >
                         <Download className="w-3.5 h-3.5" />
                         <span>
-                          {loadingMediaKey === `${item.id}_maximo_`
+                          {loadingMediaKey === `${item.id}_maximo_0_`
                             ? 'جاري التحميل...'
                             : ticket?.maximoAttachmentType === 'pdf'
                             ? 'تحميل PDF (عند الطلب)'
-                            : 'معاينة الصورة (عند الطلب)'}
+                            : 'معاينة الصورة'}
                         </span>
                       </button>
                     </div>
+                  )}
+
+                  {/* Quick "Start Work" Action Button for New Tickets before closing or before Maximo # */}
+                  {ticketBucket === 'new' && (
+                    <button
+                      type="button"
+                      disabled={startingTicketId === item.id}
+                      onClick={() => handleStartTicketWork(item)}
+                      className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition"
+                    >
+                      <PlayCircle className="w-4 h-4" />
+                      <span>
+                        {startingTicketId === item.id
+                          ? 'جاري التحويل لقيد العمل...'
+                          : 'استلام البلاغ وبدء العمل عليه (تحويل لـ يتم العمل عليها)'}
+                      </span>
+                    </button>
                   )}
 
                   {/* Action Row: Close Ticket with Fix Image OR Copy Mandatory Evaluation Link */}
@@ -1401,35 +1735,60 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                       </div>
                       {ev.notes && <p className="text-slate-700">{ev.notes}</p>}
                       {(ev.hasMedia || (ev.media && ev.media.length > 0)) && (
-                        <div className="flex gap-2 pt-1">
+                        <div className="flex flex-wrap gap-2 pt-1">
                           {ev.media && ev.media.length > 0 ? (
-                            ev.media.map((m) =>
-                              m.type === 'image' ? (
-                                <img
-                                  key={m.id}
-                                  src={m.url}
-                                  alt=""
-                                  onClick={() => setPreviewImage(m.url)}
-                                  className="w-16 h-16 rounded-xl object-cover border border-slate-300 cursor-pointer"
-                                />
-                              ) : null
-                            )
+                            ev.media.map((m, mIdx) => (
+                              <OnDemandPhotoSlot
+                                key={m.id || mIdx}
+                                loadedUrl={m.url}
+                                mediaType={m.type || 'image'}
+                                badgeLabel={`مرفق #${mIdx + 1}`}
+                                badgeTone="blue"
+                                sizeClass="w-16 h-16"
+                                onClick={() =>
+                                  setPreviewGallery({
+                                    items: (ev.media || []).map((em, i) => ({
+                                      url: em.url,
+                                      type: em.type || 'image',
+                                      name: em.name,
+                                      label: `مرفق المحادثة (#${i + 1})`,
+                                    })),
+                                    initialIndex: mIdx,
+                                    title: `مرفقات محادثة ${liveChatItem.id}`,
+                                  })
+                                }
+                              />
+                            ))
                           ) : (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleLoadOnDemandAttachment(liveChatItem, 'chat', ev.id)
-                              }
-                              disabled={loadingMediaKey === `${liveChatItem.id}_chat_${ev.id}`}
-                              className="px-2.5 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-800 text-[11px] font-bold inline-flex items-center gap-1.5 transition"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                              <span>
-                                {loadingMediaKey === `${liveChatItem.id}_chat_${ev.id}`
-                                  ? 'جاري تحميل المرفق...'
-                                  : 'عرض الصورة المرفقة (تُحمّل عند الطلب)'}
-                              </span>
-                            </button>
+                            (ev.mediaMeta && ev.mediaMeta.length > 0
+                              ? ev.mediaMeta
+                              : [{ id: 'ev_m0', type: 'image' as const }]
+                            ).map((meta, mIdx) => {
+                              const loadedEvImg =
+                                loadedMediaByFixtureId[liveChatItem.id]?.historyMediaById?.[
+                                  ev.id
+                                ]?.[mIdx]?.url;
+                              return (
+                                <OnDemandPhotoSlot
+                                  key={meta.id || mIdx}
+                                  loadedUrl={loadedEvImg}
+                                  mediaType={meta.type || 'image'}
+                                  badgeLabel={
+                                    ev.mediaMeta && ev.mediaMeta.length > 1
+                                      ? `مرفق #${mIdx + 1}`
+                                      : 'مرفق محادثة'
+                                  }
+                                  badgeTone="blue"
+                                  sizeClass="w-20 h-20"
+                                  isLoading={
+                                    loadingMediaKey === `${liveChatItem.id}_chat_${mIdx}_${ev.id}`
+                                  }
+                                  onClick={() =>
+                                    handleLoadOnDemandAttachment(liveChatItem, 'chat', mIdx, ev.id)
+                                  }
+                                />
+                              );
+                            })
                           )}
                         </div>
                       )}
@@ -1486,11 +1845,13 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
         </div>
       )}
 
-      {previewImage && (
+      {previewGallery && (
         <ImageViewerModal
-          src={previewImage}
-          title="معاينة مرفق البلاغ"
-          onClose={() => setPreviewImage(null)}
+          src={previewGallery.items[previewGallery.initialIndex]?.url || null}
+          items={previewGallery.items}
+          initialIndex={previewGallery.initialIndex}
+          title={previewGallery.title}
+          onClose={() => setPreviewGallery(null)}
         />
       )}
     </div>

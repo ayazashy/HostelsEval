@@ -11,21 +11,19 @@ import {
 } from '../../services/firestoreService';
 import { compressAndWatermarkImage } from '../../utils/imageCompressor';
 import { DEFECT_TAGS, getZoneNameAr, KSU_SERVICE_EVALUATION_URL } from '../../config/facilityTemplates';
-import { ImageViewerModal } from '../Common/ImageViewerModal';
+import { ImageViewerModal, MediaGalleryEntry } from '../Common/ImageViewerModal';
+import { OnDemandPhotoSlot } from '../Common/OnDemandPhotoSlot';
 import {
   Star,
   CheckCircle2,
   XCircle,
   Camera,
-  FileText,
-  Image as ImageIcon,
   ShieldAlert,
   Wrench,
   Trash2,
   ExternalLink,
   Copy,
   Check,
-  Eye,
   X,
 } from 'lucide-react';
 
@@ -55,16 +53,24 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
   const [copiedMaximo, setCopiedMaximo] = useState<boolean>(false);
   const [isCompressing, setIsCompressing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [previewGallery, setPreviewGallery] = useState<{
+    items: MediaGalleryEntry[];
+    initialIndex: number;
+    title: string;
+  } | null>(null);
   const [loadedVaults, setLoadedVaults] = useState<Record<string, FacilityMediaVaultDoc>>({});
   const [loadingTarget, setLoadingTarget] = useState<string | null>(null);
 
   if (!currentItem) return null;
 
   const ticket = currentItem.maintenanceTicket;
+  const loadedVault = loadedVaults[currentItem.id];
 
-  const handleLoadAndPreviewGateMedia = async (target: 'maximo' | 'after' | 'before') => {
-    setLoadingTarget(target);
+  const handleLoadAndPreviewGateMedia = async (
+    target: 'maximo' | 'after' | 'before',
+    beforeIndex: number = 0
+  ) => {
+    setLoadingTarget(`${target}_${beforeIndex}`);
     try {
       let vault: FacilityMediaVaultDoc | null = loadedVaults[currentItem.id] || null;
       if (!vault) {
@@ -82,26 +88,73 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
           vault.maximoAttachmentName ||
           ticket?.maximoAttachmentName ||
           `Maximo_${ticket?.maximoNumber || currentItem.id}.pdf`;
-        if (maxUrl) {
-          if (maxType === 'pdf' || maxUrl.startsWith('data:application/pdf')) {
-            const a = document.createElement('a');
-            a.href = maxUrl;
-            a.download = maxName;
-            a.click();
-          } else {
-            setPreviewImage(maxUrl);
-          }
+        if (maxUrl && (maxType === 'pdf' || maxUrl.startsWith('data:application/pdf'))) {
+          const a = document.createElement('a');
+          a.href = maxUrl;
+          a.download = maxName;
+          a.click();
+          return;
         }
-      } else if (target === 'after') {
-        const afterUrl = vault.closurePhotoBase64 || ticket?.closurePhotoBase64;
-        if (afterUrl) setPreviewImage(afterUrl);
-      } else if (target === 'before') {
-        const beforeUrl =
-          vault.photoBase64 ||
-          vault.media?.find((m) => m.type === 'image')?.url ||
-          currentItem.photoBase64;
-        if (beforeUrl) setPreviewImage(beforeUrl);
       }
+
+      const entries: MediaGalleryEntry[] = [];
+      const baseMedia =
+        vault.media && vault.media.length > 0
+          ? vault.media
+          : vault.photoBase64
+          ? [
+              {
+                id: 'p0',
+                type: 'image' as const,
+                url: vault.photoBase64,
+                capturedAt: vault.updatedAt,
+              },
+            ]
+          : [];
+      baseMedia.forEach((m, idx) => {
+        if (m?.url) {
+          entries.push({
+            url: m.url,
+            type: m.type || 'image',
+            name: m.name,
+            label: baseMedia.length > 1 ? `صورة العطل قبل الإصلاح (#${idx + 1})` : 'صورة العطل قبل الإصلاح',
+          });
+        }
+      });
+
+      const beforeLen = entries.length;
+      let afterIdx = -1;
+      let maxIdx = -1;
+
+      const afterUrl = vault.closurePhotoBase64 || ticket?.closurePhotoBase64;
+      if (afterUrl) {
+        afterIdx = entries.length;
+        entries.push({ url: afterUrl, type: 'image', label: 'صورة الصيانة بعد الإصلاح' });
+      }
+
+      const maxUrl = vault.maximoAttachmentBase64 || ticket?.maximoAttachmentBase64;
+      const maxType = vault.maximoAttachmentType || ticket?.maximoAttachmentType;
+      if (maxUrl && maxType !== 'pdf' && !maxUrl.startsWith('data:application/pdf')) {
+        maxIdx = entries.length;
+        entries.push({ url: maxUrl, type: 'image', label: 'مرفق مستند ماكسمو' });
+      }
+
+      if (entries.length === 0) return;
+
+      let idxToOpen = 0;
+      if (target === 'before') {
+        idxToOpen = Math.max(0, Math.min(beforeIndex, Math.max(0, beforeLen - 1)));
+      } else if (target === 'after' && afterIdx >= 0) {
+        idxToOpen = afterIdx;
+      } else if (target === 'maximo' && maxIdx >= 0) {
+        idxToOpen = maxIdx;
+      }
+
+      setPreviewGallery({
+        items: entries,
+        initialIndex: idxToOpen,
+        title: `شواهد البلاغ (${currentItem.id})`,
+      });
     } finally {
       setLoadingTarget(null);
     }
@@ -278,67 +331,59 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
                 {ticket?.closureNotes || 'تم إتمام الإصلاح وإغلاق البلاغ في النظام.'}
               </p>
 
-              {/* Maximo Attachment & Closure Photo (On-Demand Fetch) */}
+              {/* Maximo Attachment & Before/After Photos (On-Demand Photo Frames) */}
               <div className="flex flex-wrap items-center gap-2 pt-1">
-                {(ticket?.hasMaximoAttachment || ticket?.maximoAttachmentBase64) && (
-                  <button
-                    type="button"
-                    disabled={loadingTarget === 'maximo'}
-                    onClick={() => handleLoadAndPreviewGateMedia('maximo')}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 font-bold"
-                  >
-                    {ticket.maximoAttachmentType === 'pdf' ? (
-                      <>
-                        <FileText className="w-3.5 h-3.5 text-rose-600" />
-                        <span>
-                          {loadingTarget === 'maximo'
-                            ? 'جاري التحميل...'
-                            : 'مرفق بلاغ ماكسمو (PDF)'}
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <ImageIcon className="w-3.5 h-3.5 text-blue-600" />
-                        <span>
-                          {loadingTarget === 'maximo'
-                            ? 'جاري التحميل...'
-                            : 'صورة مستند ماكسمو (عند الطلب)'}
-                        </span>
-                      </>
-                    )}
-                  </button>
-                )}
-
                 {(ticket?.hasClosurePhoto || ticket?.closurePhotoBase64) && (
-                  <button
-                    type="button"
-                    disabled={loadingTarget === 'after'}
-                    onClick={() => handleLoadAndPreviewGateMedia('after')}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold"
-                  >
-                    <Eye className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>
-                      {loadingTarget === 'after'
-                        ? 'جاري التحميل...'
-                        : 'صورة الصيانة بعد الإصلاح (عند الطلب)'}
-                    </span>
-                  </button>
+                  <OnDemandPhotoSlot
+                    loadedUrl={loadedVault?.closurePhotoBase64 || ticket?.closurePhotoBase64}
+                    mediaType="image"
+                    badgeLabel="بعد الإصلاح"
+                    badgeTone="emerald"
+                    sizeClass="w-20 h-20"
+                    isLoading={loadingTarget === 'after_0'}
+                    onClick={() => handleLoadAndPreviewGateMedia('after', 0)}
+                  />
                 )}
 
-                {(currentItem.hasPhoto || currentItem.photoBase64) && (
-                  <button
-                    type="button"
-                    disabled={loadingTarget === 'before'}
-                    onClick={() => handleLoadAndPreviewGateMedia('before')}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 border border-slate-300 text-slate-700 font-bold"
-                  >
-                    <Eye className="w-3.5 h-3.5 text-slate-600" />
-                    <span>
-                      {loadingTarget === 'before'
-                        ? 'جاري التحميل...'
-                        : 'صورة العطل قبل الإصلاح (عند الطلب)'}
-                    </span>
-                  </button>
+                {(currentItem.hasPhoto ||
+                  currentItem.photoBase64 ||
+                  (currentItem.mediaCount || 0) > 0) &&
+                  (currentItem.mediaMeta && currentItem.mediaMeta.length > 0
+                    ? currentItem.mediaMeta
+                    : Array.from(
+                        { length: currentItem.mediaCount || 1 },
+                        (_, i) => ({ id: `gate_b_${i}`, type: 'image' as const })
+                      )
+                  ).map((meta, idx, arr) => (
+                    <OnDemandPhotoSlot
+                      key={meta.id || idx}
+                      loadedUrl={
+                        loadedVault?.media?.[idx]?.url ||
+                        (idx === 0
+                          ? loadedVault?.photoBase64 || currentItem.photoBase64
+                          : undefined)
+                      }
+                      mediaType={meta.type || 'image'}
+                      badgeLabel={arr.length > 1 ? `قبل #${idx + 1}` : 'قبل الإصلاح'}
+                      badgeTone="slate"
+                      sizeClass="w-20 h-20"
+                      isLoading={loadingTarget === `before_${idx}`}
+                      onClick={() => handleLoadAndPreviewGateMedia('before', idx)}
+                    />
+                  ))}
+
+                {(ticket?.hasMaximoAttachment || ticket?.maximoAttachmentBase64) && (
+                  <OnDemandPhotoSlot
+                    loadedUrl={
+                      loadedVault?.maximoAttachmentBase64 || ticket?.maximoAttachmentBase64
+                    }
+                    mediaType={ticket.maximoAttachmentType === 'pdf' ? 'pdf' : 'image'}
+                    badgeLabel={ticket.maximoAttachmentType === 'pdf' ? 'PDF ماكسمو' : 'مرفق ماكسمو'}
+                    badgeTone="blue"
+                    sizeClass="w-20 h-20"
+                    isLoading={loadingTarget === 'maximo_0'}
+                    onClick={() => handleLoadAndPreviewGateMedia('maximo', 0)}
+                  />
                 )}
               </div>
             </div>
@@ -552,11 +597,13 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
         </form>
       </div>
 
-      {previewImage && (
+      {previewGallery && (
         <ImageViewerModal
-          src={previewImage}
-          title="معاينة شواهد البلاغ"
-          onClose={() => setPreviewImage(null)}
+          src={previewGallery.items[previewGallery.initialIndex]?.url || null}
+          items={previewGallery.items}
+          initialIndex={previewGallery.initialIndex}
+          title={previewGallery.title}
+          onClose={() => setPreviewGallery(null)}
         />
       )}
     </div>

@@ -486,7 +486,7 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
       <div ref={mountRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
 
       {/* Top Floating Controls */}
-      <div className="absolute top-4 right-4 left-4 flex justify-between items-center pointer-events-none">
+      <div className="absolute top-4 right-4 left-4 flex flex-wrap justify-between items-center gap-2 pointer-events-none">
         <div className="bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm pointer-events-auto flex items-center gap-2">
           <span className="text-xs font-bold text-slate-800">
             {buildingId} • {effectiveFloorsCount} أدوار
@@ -575,8 +575,8 @@ export const Building3DViewer: React.FC<Building3DViewerProps> = ({
       )}
 
       {/* Legend */}
-      <div className="absolute bottom-3 right-4 left-4 flex justify-between items-center pointer-events-none text-xs">
-        <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4 pointer-events-auto">
+      <div className="absolute bottom-3 right-4 left-4 flex flex-wrap justify-between items-center gap-2 pointer-events-none text-xs">
+        <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center gap-3 sm:gap-4 pointer-events-auto">
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-slate-400" />
             <span className="text-slate-700">غير مفحوص</span>

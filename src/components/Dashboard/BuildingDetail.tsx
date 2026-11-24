@@ -11,7 +11,7 @@ import { summarizeWing, getScoreColor } from '../../utils/healthScore';
 import { getBuildingStructure } from '../../utils/buildingStructureStore';
 import { fetchFacilityMediaOnDemand } from '../../services/firestoreService';
 import { TimelineViewer } from '../Timeline/TimelineViewer';
-import { ImageViewerModal } from '../Common/ImageViewerModal';
+import { ImageViewerModal, MediaGalleryEntry } from '../Common/ImageViewerModal';
 import {
   ArrowRight,
   ClipboardEdit,
@@ -23,7 +23,9 @@ import {
   CheckCircle2,
   AlertTriangle,
   Wrench,
-  Eye,
+  Image as ImageIcon,
+  DownloadCloud,
+  Loader2,
 } from 'lucide-react';
 
 interface BuildingDetailProps {
@@ -57,8 +59,12 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
 }) => {
   const [selectedWing, setSelectedWing] = useState<number | null>(null);
   const [selectedFloor, setSelectedFloor] = useState<number | null>(null);
-  const [activePhotoModal, setActivePhotoModal] = useState<string | null>(null);
-  const [loadedThumbs, setLoadedThumbs] = useState<Record<string, string>>({});
+  const [previewGallery, setPreviewGallery] = useState<{
+    items: MediaGalleryEntry[];
+    initialIndex: number;
+    title: string;
+  } | null>(null);
+  const [loadedThumbs, setLoadedThumbs] = useState<Record<string, MediaGalleryEntry[]>>({});
   const [loadingPhotoId, setLoadingPhotoId] = useState<string | null>(null);
 
   const structure = getBuildingStructure(building.id);
@@ -80,25 +86,60 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
     : [];
 
   const handleOpenPhotoOnDemand = async (item: FixtureEvaluation) => {
-    const existingThumb =
-      loadedThumbs[item.id] ||
-      item.photoBase64 ||
-      item.media?.find((m) => m.type === 'image')?.url;
-    if (existingThumb) {
-      setActivePhotoModal(existingThumb);
+    const existingList = loadedThumbs[item.id];
+    if (existingList && existingList.length > 0) {
+      setPreviewGallery({
+        items: existingList,
+        initialIndex: 0,
+        title: `توثيق ${building.nameAr} (${item.id})`,
+      });
       return;
     }
 
     setLoadingPhotoId(item.id);
     try {
       const vault = await fetchFacilityMediaOnDemand(item.id);
-      const url =
-        vault?.photoBase64 ||
-        vault?.media?.find((m) => m.type === 'image')?.url ||
-        vault?.closurePhotoBase64;
-      if (url) {
-        setLoadedThumbs((prev) => ({ ...prev, [item.id]: url }));
-        setActivePhotoModal(url);
+      const entries: MediaGalleryEntry[] = [];
+      const baseList =
+        vault?.media && vault.media.length > 0
+          ? vault.media
+          : vault?.photoBase64
+          ? [{ id: 'p0', type: 'image' as const, url: vault.photoBase64, capturedAt: vault.updatedAt }]
+          : item.media && item.media.length > 0
+          ? item.media
+          : item.photoBase64
+          ? [{ id: 'p0', type: 'image' as const, url: item.photoBase64, capturedAt: item.updatedAt }]
+          : [];
+
+      baseList.forEach((m, idx) => {
+        if (m?.url) {
+          entries.push({
+            url: m.url,
+            type: m.type || 'image',
+            name: m.name,
+            label:
+              baseList.length > 1
+                ? `صورة قبل الإصلاح (#${idx + 1})`
+                : 'صورة البلاغ قبل الإصلاح',
+          });
+        }
+      });
+
+      if (vault?.closurePhotoBase64) {
+        entries.push({
+          url: vault.closurePhotoBase64,
+          type: 'image',
+          label: 'صورة الصيانة بعد الإصلاح',
+        });
+      }
+
+      if (entries.length > 0) {
+        setLoadedThumbs((prev) => ({ ...prev, [item.id]: entries }));
+        setPreviewGallery({
+          items: entries,
+          initialIndex: 0,
+          title: `توثيق ${building.nameAr} (${item.id})`,
+        });
       }
     } finally {
       setLoadingPhotoId(null);
@@ -308,16 +349,22 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
                 {photoEvaluations.map((item) => {
                   const thumbUrl =
-                    loadedThumbs[item.id] ||
+                    loadedThumbs[item.id]?.find((x) => x.type === 'image')?.url ||
                     item.photoBase64 ||
                     item.media?.find((m) => m.type === 'image')?.url ||
                     '';
                   const isLoadingThis = loadingPhotoId === item.id;
+                  const countForItem =
+                    loadedThumbs[item.id]?.length || item.mediaCount || 1;
                   return (
                     <div
                       key={item.id}
                       onClick={() => handleOpenPhotoOnDemand(item)}
-                      className="group relative rounded-xl overflow-hidden border border-slate-200 bg-slate-100 cursor-pointer shadow-xs hover:shadow-md transition"
+                      className={`group relative rounded-xl overflow-hidden cursor-pointer shadow-xs hover:shadow-md transition ${
+                        thumbUrl
+                          ? 'border border-slate-200 bg-slate-100'
+                          : 'border-2 border-dashed border-slate-300 bg-slate-100 hover:border-blue-400'
+                      }`}
                     >
                       <div className="relative w-full h-28 overflow-hidden bg-slate-100 flex flex-col items-center justify-center gap-1.5">
                         {thumbUrl ? (
@@ -328,21 +375,35 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
                           />
                         ) : (
                           <div className="flex flex-col items-center justify-center gap-1 text-slate-600 px-2 text-center">
-                            <Eye className="w-5 h-5 text-blue-600" />
-                            <span className="text-[10px] font-bold">
-                              {isLoadingThis ? 'جاري التحميل...' : 'اضغط لتحميل ومعاينة الصورة'}
+                            <div className="w-9 h-9 rounded-lg bg-white border border-slate-200 flex items-center justify-center shadow-2xs">
+                              {isLoadingThis ? (
+                                <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
+                              ) : (
+                                <ImageIcon className="w-4 h-4 text-slate-500" />
+                              )}
+                            </div>
+                            <span className="text-[10px] font-bold inline-flex items-center gap-1 leading-tight">
+                              {!isLoadingThis && <DownloadCloud className="w-3 h-3 text-blue-600" />}
+                              <span>
+                                {isLoadingThis ? 'جاري التحميل...' : 'صورة للتحميل'}
+                              </span>
                             </span>
                           </div>
+                        )}
+                        {countForItem > 1 && (
+                          <span className="absolute top-1.5 left-1.5 bg-blue-600 text-white px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold shadow-xs">
+                            {countForItem} صور
+                          </span>
                         )}
                         <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-xs text-white p-1 rounded-lg pointer-events-none transition group-hover:bg-blue-600">
                           <Maximize2 className="w-3.5 h-3.5" />
                         </div>
                       </div>
-                      <div className="p-2 bg-white border-t border-slate-100 flex flex-col">
-                        <span className="text-[10px] font-mono font-bold text-slate-900 truncate">
+                      <div className="p-2 bg-white border-t border-slate-100 flex flex-col gap-0.5">
+                        <span className="text-[10px] font-mono font-bold text-slate-900 leading-snug break-all">
                           {item.id}
                         </span>
-                        <span className="text-[9px] text-slate-500 truncate">
+                        <span className="text-[10px] text-slate-500 leading-snug">
                           {item.defects.join('، ') || 'توثيق حالة'}
                         </span>
                       </div>
@@ -360,12 +421,14 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
             currentUserName={currentUserName}
           />
 
-          {/* Interactive Full-Screen Image Lightbox with Pinch-to-Zoom */}
-          {activePhotoModal && (
+          {/* Interactive Full-Screen Multi-Photo Lightbox with Pinch-to-Zoom */}
+          {previewGallery && (
             <ImageViewerModal
-              src={activePhotoModal}
-              title={`توثيق ${building.nameAr}`}
-              onClose={() => setActivePhotoModal(null)}
+              src={previewGallery.items[previewGallery.initialIndex]?.url || null}
+              items={previewGallery.items}
+              initialIndex={previewGallery.initialIndex}
+              title={previewGallery.title}
+              onClose={() => setPreviewGallery(null)}
             />
           )}
         </>

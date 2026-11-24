@@ -28,10 +28,13 @@ export const NetworkProgressPopup: React.FC = () => {
   const isUpload = transfer.direction === 'upload';
 
   return (
-    <div className="fixed bottom-16 md:bottom-5 left-4 right-4 sm:left-6 sm:right-auto sm:w-96 z-50 pointer-events-none print:hidden">
+    <div
+      className="fixed left-4 right-4 sm:left-6 sm:right-auto sm:w-96 z-50 pointer-events-none print:hidden md:bottom-5"
+      style={{ bottom: 'calc(4.75rem + env(safe-area-inset-bottom, 0px))' }}
+    >
       <div className="bg-slate-900 text-white border border-slate-700 rounded-2xl p-3.5 shadow-2xl pointer-events-auto flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-2.5">
-          <div className="flex items-center gap-2.5 min-w-0">
+        <div className="flex items-start justify-between gap-2.5">
+          <div className="flex items-start gap-2.5 min-w-0 flex-1">
             <div
               className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
                 isUpload
@@ -45,13 +48,13 @@ export const NetworkProgressPopup: React.FC = () => {
                 <DownloadCloud className="w-4 h-4" />
               )}
             </div>
-            <div className="min-w-0">
-              <div className="text-xs font-bold text-white truncate flex items-center gap-1.5">
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400 shrink-0" />
-                <span className="truncate">{transfer.titleAr}</span>
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-bold text-white flex items-start gap-1.5 leading-snug">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400 shrink-0 mt-0.5" />
+                <span>{transfer.titleAr}</span>
               </div>
               {transfer.subtitleAr && (
-                <p className="text-[10px] text-slate-300 truncate mt-0.5">
+                <p className="text-[10px] text-slate-300 mt-0.5 leading-snug">
                   {transfer.subtitleAr}
                 </p>
               )}
@@ -76,3 +79,4 @@ export const NetworkProgressPopup: React.FC = () => {
     </div>
   );
 };
+

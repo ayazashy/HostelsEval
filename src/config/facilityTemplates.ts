@@ -1022,6 +1022,58 @@ export function isCleaningOrPestTicket(item: {
   return dept === 'cleaning' || dept === 'pest_control';
 }
 
+export const FIXTURE_TYPE_LABELS: Record<
+  string,
+  { ar: string; en: string; portal?: 'maintenance' | 'cleaning' | 'all' }
+> = {
+  TOI: { ar: 'مراحيض (إفرنجي/شرقي)', en: 'Toilets', portal: 'maintenance' },
+  SHW: { ar: 'مراوش الاستحمام', en: 'Showers', portal: 'maintenance' },
+  SNK: { ar: 'مغاسل ومجالي', en: 'Washbasins & Sinks', portal: 'maintenance' },
+  WHT: { ar: 'سخانات المياه', en: 'Water Heaters', portal: 'maintenance' },
+  EXH: { ar: 'مراوح شفط وإضاءة الحمام', en: 'Bathroom Exhaust & Lights', portal: 'maintenance' },
+  FLR: { ar: 'صفايات وأرضيات وبلاط وفواصل', en: 'Drains, Tiles & Partitions', portal: 'maintenance' },
+  STV: { ar: 'مواقد المطبخ الكهربائية', en: 'Kitchen Stoves', portal: 'maintenance' },
+  CAB: { ar: 'دواليب وأبواب المطبخ', en: 'Kitchen Cabinets & Doors', portal: 'maintenance' },
+  KEX: { ar: 'شفاط وكاشف حرارة المطبخ', en: 'Kitchen Exhaust & Detector', portal: 'maintenance' },
+  BLC: { ar: 'بلكونة المطبخ', en: 'Kitchen Balcony', portal: 'maintenance' },
+  WHV: { ar: 'وحدات التكييف بالأجنحة', en: 'Wing AC Units', portal: 'maintenance' },
+  WEL: { ar: 'كهرباء وأبواب وإنذار الجناح', en: 'Wing Doors, Lights & Alarm', portal: 'maintenance' },
+  OFC: { ar: 'مكتب الإشراف', en: 'Supervision Office', portal: 'maintenance' },
+  FAP: { ar: 'لوحة إنذار الحريق', en: 'Fire Alarm Panel', portal: 'maintenance' },
+  ELV: { ar: 'المصاعد الكهربائية', en: 'Elevators', portal: 'maintenance' },
+  FIR: { ar: 'خراطيم وطفايات الحريق', en: 'Fire Cabinets & Extinguishers', portal: 'maintenance' },
+  COR: { ar: 'الممرات والدرج والأبواب', en: 'Corridors, Stairs & Doors', portal: 'maintenance' },
+  CEL: { ar: 'إضاءة وتكييف الصالات', en: 'Hall Lighting & AC', portal: 'maintenance' },
+  ROF: { ar: 'سطح المبنى والعزل', en: 'Building Roof', portal: 'maintenance' },
+  RFL: { ar: 'كشافات السطح والطوارئ', en: 'Roof Floodlights', portal: 'maintenance' },
+  EXT: { ar: 'المنطقة الخارجية والصرف', en: 'Exterior Drainage', portal: 'maintenance' },
+  HYG: { ar: 'النظافة العامة والتعقيم', en: 'General Cleaning', portal: 'cleaning' },
+  PST: { ar: 'مكافحة الحشرات والقوارض', en: 'Pest Control', portal: 'cleaning' },
+};
+
+export function getFixtureTypeFilterLabel(
+  typeCode: string,
+  categories?: FacilityCategoryConfig[]
+): { ar: string; en: string } {
+  const code = (typeCode || '').toUpperCase();
+  if (FIXTURE_TYPE_LABELS[code]) {
+    return {
+      ar: FIXTURE_TYPE_LABELS[code].ar,
+      en: FIXTURE_TYPE_LABELS[code].en,
+    };
+  }
+  const activeCats = categories || ALL_FACILITY_CATEGORIES;
+  for (const cat of activeCats) {
+    for (const tmplList of Object.values(cat.wingTemplates)) {
+      const found = tmplList?.find((t) => t.typeCode.toUpperCase() === code);
+      if (found) {
+        return { ar: found.nameAr, en: found.nameEn };
+      }
+    }
+  }
+  return { ar: code || 'أخرى', en: code || 'Other' };
+}
+
 // ----------------------------------------------------------------------------
 // 3. Reusable Templates per Wing / Zone Type
 // ----------------------------------------------------------------------------

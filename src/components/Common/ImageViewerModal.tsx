@@ -1,14 +1,31 @@
 // ============================================================================
-// عارض الصور التفاعلي ملء الشاشة (Universal Image Viewer Modal)
-// يدعم التكبير بإصبعين (Pinch to Zoom)، التمرير، والنقر المزدوج على الهواتف والويب
-// مصمم وفق أعلى معايير الـ UX دون نصوص أو تعليمات زائدة
+// عارض الصور والوسائط المتعددة التفاعلي (Universal Multi-Photo Viewer Modal)
+// يدعم عرض صورة واحدة أو معرض صور متعدد مع التنقل بالأسهم والتصغير والتكبير
 // ============================================================================
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { X, ZoomIn, ZoomOut, RotateCcw, Download } from 'lucide-react';
+import {
+  X,
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
+  Download,
+  ChevronRight,
+  ChevronLeft,
+  FileText,
+} from 'lucide-react';
+
+export interface MediaGalleryEntry {
+  url: string;
+  type?: 'image' | 'video' | 'pdf';
+  label?: string;
+  name?: string;
+}
 
 export interface ImageViewerModalProps {
   src: string | null;
+  items?: MediaGalleryEntry[];
+  initialIndex?: number;
   alt?: string;
   title?: string;
   onClose: () => void;
@@ -16,10 +33,22 @@ export interface ImageViewerModalProps {
 
 export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
   src,
+  items,
+  initialIndex = 0,
   alt = 'صورة مكبرة',
   title,
   onClose,
 }) => {
+  const gallery: MediaGalleryEntry[] = React.useMemo(() => {
+    if (items && items.length > 0) {
+      return items.filter((item) => !!item?.url);
+    }
+    return src ? [{ url: src, type: 'image', label: title }] : [];
+  }, [items, src, title]);
+
+  const [activeIndex, setActiveIndex] = useState<number>(() =>
+    Math.max(0, Math.min(initialIndex, Math.max(0, gallery.length - 1)))
+  );
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
@@ -37,24 +66,51 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
   const mouseStartPosRef = useRef({ x: 0, y: 0 });
   const mouseDragStartPosRef = useRef({ x: 0, y: 0 });
 
+  useEffect(() => {
+    setActiveIndex(Math.max(0, Math.min(initialIndex, Math.max(0, gallery.length - 1))));
+  }, [initialIndex, gallery.length]);
+
+  const activeItem = gallery[activeIndex] || gallery[0] || null;
+  const activeUrl = activeItem?.url || null;
+  const activeType =
+    activeItem?.type ||
+    (activeUrl?.startsWith('data:video/')
+      ? 'video'
+      : activeUrl?.startsWith('data:application/pdf')
+      ? 'pdf'
+      : 'image');
+
   // Reset zoom & pan when image changes
   useEffect(() => {
     setScale(1);
     setPosition({ x: 0, y: 0 });
-  }, [src]);
+  }, [activeUrl, activeIndex]);
 
-  // Handle ESC key to close
+  const handleNext = useCallback(() => {
+    if (gallery.length <= 1) return;
+    setActiveIndex((prev) => (prev + 1) % gallery.length);
+  }, [gallery.length]);
+
+  const handlePrev = useCallback(() => {
+    if (gallery.length <= 1) return;
+    setActiveIndex((prev) => (prev - 1 + gallery.length) % gallery.length);
+  }, [gallery.length]);
+
+  // Keyboard support: ESC to close, Left/Right arrows to switch images
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         onClose();
+      } else if (e.key === 'ArrowLeft') {
+        handleNext();
+      } else if (e.key === 'ArrowRight') {
+        handlePrev();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  }, [onClose, handleNext, handlePrev]);
 
-  // Clamp translation based on actual image dimensions and scale
   const clampPosition = useCallback((x: number, y: number, currentScale: number) => {
     if (currentScale <= 1) return { x: 0, y: 0 };
     const img = imageRef.current;
@@ -73,12 +129,9 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
     };
   }, []);
 
-  // --------------------------------------------------------------------------
-  // Mobile Touch Gestures: Two-Finger Pinch & One-Finger Pan & Double-Tap
-  // --------------------------------------------------------------------------
   const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (activeType !== 'image') return;
     if (e.touches.length === 2) {
-      // Start two-finger pinch
       const touch1 = e.touches[0];
       const touch2 = e.touches[1];
       pinchStartDistRef.current = Math.hypot(
@@ -90,7 +143,6 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
       const touch = e.touches[0];
       lastTouchPosRef.current = { x: touch.clientX, y: touch.clientY };
 
-      // Double-tap detection (< 300ms)
       const now = Date.now();
       if (now - lastTapTimeRef.current < 300) {
         if (scale > 1.2) {
@@ -107,6 +159,7 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
   };
 
   const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (activeType !== 'image') return;
     if (e.cancelable) {
       e.preventDefault();
     }
@@ -134,8 +187,8 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
   };
 
   const handleTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (activeType !== 'image') return;
     if (e.touches.length === 1) {
-      // Transition from 2 fingers to 1: capture new single finger position smoothly
       lastTouchPosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
       pinchStartDistRef.current = 0;
     } else if (e.touches.length === 0) {
@@ -147,10 +200,8 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
     }
   };
 
-  // --------------------------------------------------------------------------
-  // Desktop Wheel & Mouse Drag
-  // --------------------------------------------------------------------------
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (activeType !== 'image') return;
     e.preventDefault();
     const zoomDelta = -e.deltaY * 0.002;
     const nextScale = Math.max(1, Math.min(4.5, scale + zoomDelta));
@@ -163,14 +214,14 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (scale <= 1) return;
+    if (scale <= 1 || activeType !== 'image') return;
     setIsDragging(true);
     mouseStartPosRef.current = { x: e.clientX, y: e.clientY };
     mouseDragStartPosRef.current = { ...position };
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!isDragging || scale <= 1) return;
+    if (!isDragging || scale <= 1 || activeType !== 'image') return;
     const dx = e.clientX - mouseStartPosRef.current.x;
     const dy = e.clientY - mouseStartPosRef.current.y;
     setPosition(
@@ -187,6 +238,7 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
   };
 
   const handleDoubleClick = () => {
+    if (activeType !== 'image') return;
     if (scale > 1.2) {
       setScale(1);
       setPosition({ x: 0, y: 0 });
@@ -195,7 +247,6 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
     }
   };
 
-  // Zoom Button Controls
   const handleZoomIn = (e: React.MouseEvent) => {
     e.stopPropagation();
     setScale((prev) => Math.min(4.5, Math.round((prev + 0.5) * 10) / 10));
@@ -218,16 +269,19 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!src) return;
+    if (!activeUrl) return;
     const link = document.createElement('a');
-    link.href = src;
-    link.download = `photo_${Date.now()}.jpg`;
+    link.href = activeUrl;
+    const ext = activeType === 'pdf' ? 'pdf' : activeType === 'video' ? 'mp4' : 'jpg';
+    link.download = activeItem?.name || `attachment_${activeIndex + 1}_${Date.now()}.${ext}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  if (!src) return null;
+  if (!activeUrl) return null;
+
+  const headerTitle = activeItem?.label || title;
 
   return (
     <div
@@ -241,7 +295,6 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
       onClick={(e) => {
-        // If clicking backdrop directly, close modal when at default scale
         if (e.target === containerRef.current) {
           onClose();
         }
@@ -254,6 +307,7 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
         backdropFilter: 'blur(10px)',
         WebkitBackdropFilter: 'blur(10px)',
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
         touchAction: 'none',
@@ -263,39 +317,64 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
         padding: '12px',
       }}
     >
-      {/* Top Floating Header & Close Button */}
+      {/* Top Floating Header & Counter & Close Button */}
       <div
         style={{
           position: 'absolute',
           top: 0,
           left: 0,
           right: 0,
-          padding: 'calc(14px + env(safe-area-inset-top, 0px)) 20px 14px',
+          padding: 'calc(14px + env(safe-area-inset-top, 0px)) 16px 14px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
+          gap: '10px',
           width: '100%',
           boxSizing: 'border-box',
-          background: 'linear-gradient(to bottom, rgba(0,0,0,0.7), transparent)',
+          background: 'linear-gradient(to bottom, rgba(0,0,0,0.75), transparent)',
           pointerEvents: 'none',
           zIndex: 110,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', pointerEvents: 'auto' }}>
-          {title && (
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: '8px',
+            pointerEvents: 'auto',
+          }}
+        >
+          {gallery.length > 1 && (
             <span
               style={{
                 color: '#ffffff',
-                fontSize: '13px',
+                fontSize: '12px',
+                fontFamily: 'var(--font-mono)',
+                fontWeight: 800,
+                backgroundColor: '#2563eb',
+                padding: '4px 10px',
+                borderRadius: '9999px',
+              }}
+            >
+              {activeIndex + 1} / {gallery.length}
+            </span>
+          )}
+          {headerTitle && (
+            <span
+              style={{
+                color: '#ffffff',
+                fontSize: '12px',
                 fontFamily: 'var(--font-arabic)',
                 fontWeight: 700,
-                backgroundColor: 'rgba(30, 41, 59, 0.75)',
+                backgroundColor: 'rgba(30, 41, 59, 0.85)',
                 padding: '4px 12px',
                 borderRadius: '9999px',
                 border: '1px solid rgba(148, 163, 184, 0.25)',
+                lineHeight: 1.4,
               }}
             >
-              {title}
+              {headerTitle}
             </span>
           )}
         </div>
@@ -314,7 +393,7 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
             alignItems: 'center',
             justifyContent: 'center',
             cursor: 'pointer',
-            transition: 'background-color 150ms ease',
+            flexShrink: 0,
           }}
           title="إغلاق"
         >
@@ -322,7 +401,68 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
         </button>
       </div>
 
-      {/* Main Image Display */}
+      {/* Multi-Photo Navigation Arrows */}
+      {gallery.length > 1 && (
+        <>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handlePrev();
+            }}
+            style={{
+              position: 'absolute',
+              right: '12px',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              zIndex: 115,
+              width: '42px',
+              height: '42px',
+              borderRadius: '9999px',
+              backgroundColor: 'rgba(15, 23, 42, 0.8)',
+              color: '#ffffff',
+              border: '1px solid rgba(255, 255, 255, 0.25)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+            }}
+            title="الصورة السابقة"
+          >
+            <ChevronRight className="w-5 h-5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleNext();
+            }}
+            style={{
+              position: 'absolute',
+              left: '12px',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              zIndex: 115,
+              width: '42px',
+              height: '42px',
+              borderRadius: '9999px',
+              backgroundColor: 'rgba(15, 23, 42, 0.8)',
+              color: '#ffffff',
+              border: '1px solid rgba(255, 255, 255, 0.25)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+            }}
+            title="الصورة التالية"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+        </>
+      )}
+
+      {/* Main Media Display */}
       <div
         onDoubleClick={handleDoubleClick}
         style={{
@@ -330,136 +470,283 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
           alignItems: 'center',
           justifyContent: 'center',
           maxWidth: '100%',
-          maxHeight: '100%',
-          cursor: scale > 1 ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in',
+          maxHeight: gallery.length > 1 ? '72vh' : '82vh',
+          cursor:
+            activeType === 'image'
+              ? scale > 1
+                ? isDragging
+                  ? 'grabbing'
+                  : 'grab'
+                : 'zoom-in'
+              : 'default',
         }}
       >
-        <img
-          ref={imageRef}
-          src={src}
-          alt={alt}
-          draggable={false}
-          style={{
-            maxWidth: '92vw',
-            maxHeight: '84vh',
-            objectFit: 'contain',
-            borderRadius: '16px',
-            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.6)',
-            transform: `translate3d(${position.x}px, ${position.y}px, 0) scale(${scale})`,
-            transition: isDragging || pinchStartDistRef.current > 0 ? 'none' : 'transform 180ms cubic-bezier(0.2, 0, 0, 1)',
-            pointerEvents: 'auto',
-          }}
-        />
+        {activeType === 'video' ? (
+          <video
+            src={activeUrl}
+            controls
+            autoPlay
+            style={{
+              maxWidth: '90vw',
+              maxHeight: gallery.length > 1 ? '70vh' : '80vh',
+              borderRadius: '16px',
+              backgroundColor: '#000',
+            }}
+          />
+        ) : activeType === 'pdf' ? (
+          <div
+            style={{
+              backgroundColor: '#ffffff',
+              color: '#0f172a',
+              borderRadius: '16px',
+              padding: '28px',
+              textAlign: 'center',
+              maxWidth: '360px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '12px',
+            }}
+          >
+            <FileText className="w-12 h-12 text-rose-600" />
+            <div style={{ fontWeight: 700, fontSize: '14px', wordBreak: 'break-word' }}>
+              {activeItem?.name || 'مستند PDF'}
+            </div>
+            <a
+              href={activeUrl}
+              download={activeItem?.name || 'document.pdf'}
+              style={{
+                backgroundColor: '#2563eb',
+                color: '#ffffff',
+                padding: '10px 18px',
+                borderRadius: '12px',
+                fontWeight: 700,
+                fontSize: '12px',
+                textDecoration: 'none',
+              }}
+            >
+              تحميل وفتح ملف PDF
+            </a>
+          </div>
+        ) : (
+          <img
+            ref={imageRef}
+            src={activeUrl}
+            alt={alt}
+            draggable={false}
+            style={{
+              maxWidth: '90vw',
+              maxHeight: gallery.length > 1 ? '70vh' : '82vh',
+              objectFit: 'contain',
+              borderRadius: '16px',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.6)',
+              transform: `translate3d(${position.x}px, ${position.y}px, 0) scale(${scale})`,
+              transition:
+                isDragging || pinchStartDistRef.current > 0
+                  ? 'none'
+                  : 'transform 180ms cubic-bezier(0.2, 0, 0, 1)',
+              pointerEvents: 'auto',
+            }}
+          />
+        )}
       </div>
 
-      {/* Floating Bottom Action Toolbar */}
+      {/* Bottom Strip: Multi-photo Thumbnails + Zoom Toolbar */}
       <div
         style={{
           position: 'absolute',
-          bottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
+          bottom: 'calc(14px + env(safe-area-inset-bottom, 0px))',
           left: '50%',
           transform: 'translateX(-50%)',
           display: 'flex',
+          flexDirection: 'column',
           alignItems: 'center',
           gap: '8px',
-          backgroundColor: 'rgba(15, 23, 42, 0.85)',
-          padding: '6px 14px',
-          borderRadius: '9999px',
-          border: '1px solid rgba(148, 163, 184, 0.2)',
-          boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.5)',
           zIndex: 110,
-          backdropFilter: 'blur(8px)',
-          maxWidth: 'calc(100vw - 32px)',
+          maxWidth: 'calc(100vw - 24px)',
         }}
       >
-        <button
-          onClick={handleZoomOut}
-          disabled={scale <= 1}
+        {gallery.length > 1 && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 10px',
+              borderRadius: '16px',
+              backgroundColor: 'rgba(15, 23, 42, 0.85)',
+              border: '1px solid rgba(148, 163, 184, 0.25)',
+              overflowX: 'auto',
+              maxWidth: '92vw',
+            }}
+          >
+            {gallery.map((entry, idx) => {
+              const isCurr = idx === activeIndex;
+              const t =
+                entry.type ||
+                (entry.url.startsWith('data:video/')
+                  ? 'video'
+                  : entry.url.startsWith('data:application/pdf')
+                  ? 'pdf'
+                  : 'image');
+              return (
+                <button
+                  key={`${idx}_${entry.name || entry.label || 'm'}`}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActiveIndex(idx);
+                  }}
+                  style={{
+                    width: '48px',
+                    height: '48px',
+                    borderRadius: '10px',
+                    overflow: 'hidden',
+                    flexShrink: 0,
+                    border: isCurr ? '2px solid #3b82f6' : '1px solid rgba(255,255,255,0.2)',
+                    padding: 0,
+                    backgroundColor: '#1e293b',
+                    cursor: 'pointer',
+                    position: 'relative',
+                  }}
+                  title={entry.label || `مرفق ${idx + 1}`}
+                >
+                  {t === 'image' ? (
+                    <img
+                      src={entry.url}
+                      alt=""
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    />
+                  ) : (
+                    <span
+                      style={{
+                        color: '#fff',
+                        fontSize: '10px',
+                        fontWeight: 700,
+                      }}
+                    >
+                      {t.toUpperCase()}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        <div
           style={{
-            padding: '6px',
-            borderRadius: '8px',
-            backgroundColor: 'transparent',
-            color: scale <= 1 ? '#64748b' : '#ffffff',
-            border: 'none',
-            cursor: scale <= 1 ? 'not-allowed' : 'pointer',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
-          }}
-          title="تصغير"
-        >
-          <ZoomOut className="w-4 h-4" />
-        </button>
-
-        <span
-          style={{
-            color: '#93c5fd',
-            fontSize: '12px',
-            fontFamily: 'var(--font-mono)',
-            fontWeight: 700,
-            minWidth: '44px',
-            textAlign: 'center',
+            gap: '8px',
+            backgroundColor: 'rgba(15, 23, 42, 0.85)',
+            padding: '6px 14px',
+            borderRadius: '9999px',
+            border: '1px solid rgba(148, 163, 184, 0.2)',
+            boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.5)',
+            backdropFilter: 'blur(8px)',
           }}
         >
-          {Math.round(scale * 100)}%
-        </span>
+          {activeType === 'image' && (
+            <>
+              <button
+                onClick={handleZoomOut}
+                disabled={scale <= 1}
+                style={{
+                  padding: '6px',
+                  borderRadius: '8px',
+                  backgroundColor: 'transparent',
+                  color: scale <= 1 ? '#64748b' : '#ffffff',
+                  border: 'none',
+                  cursor: scale <= 1 ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                title="تصغير"
+              >
+                <ZoomOut className="w-4 h-4" />
+              </button>
 
-        <button
-          onClick={handleZoomIn}
-          disabled={scale >= 4.5}
-          style={{
-            padding: '6px',
-            borderRadius: '8px',
-            backgroundColor: 'transparent',
-            color: scale >= 4.5 ? '#64748b' : '#ffffff',
-            border: 'none',
-            cursor: scale >= 4.5 ? 'not-allowed' : 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-          title="تكبير"
-        >
-          <ZoomIn className="w-4 h-4" />
-        </button>
+              <span
+                style={{
+                  color: '#93c5fd',
+                  fontSize: '12px',
+                  fontFamily: 'var(--font-mono)',
+                  fontWeight: 700,
+                  minWidth: '44px',
+                  textAlign: 'center',
+                }}
+              >
+                {Math.round(scale * 100)}%
+              </span>
 
-        <div style={{ width: '1px', height: '16px', backgroundColor: 'rgba(148, 163, 184, 0.3)', margin: '0 4px' }} />
+              <button
+                onClick={handleZoomIn}
+                disabled={scale >= 4.5}
+                style={{
+                  padding: '6px',
+                  borderRadius: '8px',
+                  backgroundColor: 'transparent',
+                  color: scale >= 4.5 ? '#64748b' : '#ffffff',
+                  border: 'none',
+                  cursor: scale >= 4.5 ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                title="تكبير"
+              >
+                <ZoomIn className="w-4 h-4" />
+              </button>
 
-        <button
-          onClick={handleResetZoom}
-          style={{
-            padding: '6px',
-            borderRadius: '8px',
-            backgroundColor: 'transparent',
-            color: '#e2e8f0',
-            border: 'none',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-          title="إعادة ضبط"
-        >
-          <RotateCcw className="w-4 h-4" />
-        </button>
+              <div
+                style={{
+                  width: '1px',
+                  height: '16px',
+                  backgroundColor: 'rgba(148, 163, 184, 0.3)',
+                  margin: '0 4px',
+                }}
+              />
 
-        <button
-          onClick={handleDownload}
-          style={{
-            padding: '6px',
-            borderRadius: '8px',
-            backgroundColor: 'transparent',
-            color: '#e2e8f0',
-            border: 'none',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-          title="تحميل الصورة"
-        >
-          <Download className="w-4 h-4" />
-        </button>
+              <button
+                onClick={handleResetZoom}
+                style={{
+                  padding: '6px',
+                  borderRadius: '8px',
+                  backgroundColor: 'transparent',
+                  color: '#e2e8f0',
+                  border: 'none',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                title="إعادة ضبط"
+              >
+                <RotateCcw className="w-4 h-4" />
+              </button>
+            </>
+          )}
+
+          <button
+            onClick={handleDownload}
+            style={{
+              padding: '6px',
+              borderRadius: '8px',
+              backgroundColor: 'transparent',
+              color: '#e2e8f0',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            title="تحميل"
+          >
+            <Download className="w-4 h-4" />
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -73,10 +73,10 @@ export const Navbar: React.FC<NavbarProps> = ({
       <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-xs print:hidden">
         {/* 1. Impersonation Banner */}
         {auth?.isImpersonated && (
-          <div className="bg-amber-50 border-b border-amber-200 px-4 py-1.5 flex items-center justify-between text-xs text-amber-800">
-            <div className="flex items-center gap-2">
+          <div className="bg-amber-50 border-b border-amber-200 px-4 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-800">
+            <div className="flex items-center gap-2 min-w-0">
               <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-              <span className="truncate">
+              <span className="leading-snug">
                 تقمص دور <strong>رائد {auth.buildingId}</strong> ({auth.leaderName})
               </span>
             </div>
@@ -94,19 +94,19 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Logo & Title */}
           <div
             onClick={() => onNavigate('campus')}
-            className="cursor-pointer flex items-center gap-2.5 text-right min-w-0"
+            className="cursor-pointer flex items-center gap-2 text-right min-w-0 flex-1"
           >
             <img
               src="./housing-logo.png"
               alt="شعار إدارة الإسكان الطلابي"
               className="housing-brand-logo-nav shrink-0"
-              style={{ height: '32px', width: 'auto', maxWidth: '115px', objectFit: 'contain' }}
+              style={{ height: '30px', width: 'auto', maxWidth: '105px', objectFit: 'contain' }}
             />
             <div className="min-w-0">
-              <h1 className="text-xs sm:text-base font-bold text-slate-900 tracking-tight truncate">
+              <h1 className="text-[11px] sm:text-sm md:text-base font-bold text-slate-900 tracking-tight leading-snug">
                 برنامج الصيانة المكثفة ومتابعة مرافق الإسكان
               </h1>
-              <p className="text-[10px] text-slate-500 hidden sm:block">
+              <p className="text-[10px] text-slate-500 hidden sm:block leading-snug">
                 جامعة الملك سعود • عمادة شؤون الطلاب
               </p>
             </div>
@@ -218,12 +218,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div className="flex items-center gap-1.5 text-xs shrink-0">
             {auth ? (
               <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 px-2.5 py-1.5 rounded-xl">
-                <span className="text-blue-900 font-bold truncate max-w-[110px]">
+                <span className="text-blue-900 font-bold text-[11px] leading-snug">
                   {auth.leaderName} ({auth.buildingId})
                 </span>
                 <button
                   onClick={onLockSession}
-                  className="text-slate-500 hover:text-rose-600 p-0.5"
+                  className="text-slate-500 hover:text-rose-600 p-0.5 shrink-0"
                   title="تسجيل الخروج"
                 >
                   <LogOut className="w-3.5 h-3.5" />
@@ -238,12 +238,12 @@ export const Navbar: React.FC<NavbarProps> = ({
                 }`}
               >
                 {maintenanceAuth.role === 'viewer' ? (
-                  <Eye className="w-3.5 h-3.5 text-indigo-700" />
+                  <Eye className="w-3.5 h-3.5 text-indigo-700 shrink-0" />
                 ) : (
-                  <Wrench className="w-3.5 h-3.5 text-emerald-700" />
+                  <Wrench className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
                 )}
                 <span
-                  className={`font-bold truncate max-w-[130px] ${
+                  className={`font-bold text-[11px] leading-snug ${
                     maintenanceAuth.role === 'viewer' ? 'text-indigo-900' : 'text-emerald-900'
                   }`}
                 >
@@ -251,7 +251,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </span>
                 <button
                   onClick={onLockSession}
-                  className="text-slate-500 hover:text-rose-600 p-0.5"
+                  className="text-slate-500 hover:text-rose-600 p-0.5 shrink-0"
                   title="تسجيل الخروج"
                 >
                   <LogOut className="w-3.5 h-3.5" />
@@ -278,9 +278,9 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
       </header>
 
-      {/* 3. Mobile Bottom Navigation Bar (Thumb-Friendly for Phone Users) */}
+      {/* 3. Mobile Bottom Navigation Bar (Thumb-Friendly for Phone Users - Full Uncut Labels) */}
       <nav
-        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-slate-300 px-1.5 py-1.5 flex items-stretch justify-around gap-1 print:hidden"
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-slate-300 px-1 py-1.5 flex items-stretch justify-around gap-1 print:hidden"
         style={{
           boxShadow: '0 -4px 16px rgba(15, 23, 42, 0.08)',
           paddingBottom: 'max(0.375rem, env(safe-area-inset-bottom))',
@@ -289,28 +289,28 @@ export const Navbar: React.FC<NavbarProps> = ({
         <button
           type="button"
           onClick={() => onNavigate('campus')}
-          className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold transition ${
+          className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1 px-1 rounded-xl text-[10px] font-bold transition ${
             activeView === 'campus' || activeView === 'building_detail'
               ? 'text-blue-600 bg-blue-50/80'
               : 'text-slate-500'
           }`}
         >
           <Building2 className="w-4 h-4 mb-0.5 shrink-0" />
-          <span className="truncate max-w-full">المباني</span>
+          <span className="leading-tight text-center">المباني</span>
         </button>
 
         {canViewKPI && (
           <button
             type="button"
             onClick={() => onNavigate('leaders_kpi')}
-            className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold transition ${
+            className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1 px-1 rounded-xl text-[10px] font-bold transition ${
               activeView === 'leaders_kpi'
                 ? 'text-indigo-700 bg-indigo-50/80'
                 : 'text-slate-500'
             }`}
           >
             <BarChart3 className="w-4 h-4 mb-0.5 shrink-0" />
-            <span className="truncate max-w-full">المؤشرات</span>
+            <span className="leading-tight text-center">المؤشرات</span>
           </button>
         )}
 
@@ -324,19 +324,21 @@ export const Navbar: React.FC<NavbarProps> = ({
                 onOpenLogin?.('leader');
               }
             }}
-            className={`relative flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold transition ${
+            className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1 px-1 rounded-xl text-[10px] font-bold transition ${
               activeView === 'leader_portal'
                 ? 'text-blue-600 bg-blue-50/80'
                 : 'text-slate-500'
             }`}
           >
-            <ClipboardCheck className="w-4 h-4 mb-0.5 shrink-0" />
-            <span className="truncate max-w-full">رائد المبنى</span>
-            {pendingEvaluationCount > 0 && (isAdmin || auth) && (
-              <span className="absolute top-1 left-2 w-4 h-4 rounded-full bg-purple-600 text-white text-[9px] flex items-center justify-center">
-                {pendingEvaluationCount}
-              </span>
-            )}
+            <span className="relative inline-flex items-center justify-center mb-0.5">
+              <ClipboardCheck className="w-4 h-4 shrink-0" />
+              {pendingEvaluationCount > 0 && (isAdmin || auth) && (
+                <span className="absolute -top-1.5 -left-2.5 w-4 h-4 rounded-full bg-purple-600 text-white text-[9px] flex items-center justify-center">
+                  {pendingEvaluationCount}
+                </span>
+              )}
+            </span>
+            <span className="leading-tight text-center">رائد المبنى</span>
           </button>
         )}
 
@@ -350,14 +352,14 @@ export const Navbar: React.FC<NavbarProps> = ({
                 onOpenLogin?.('maintenance');
               }
             }}
-            className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold transition ${
+            className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1 px-1 rounded-xl text-[10px] font-bold transition ${
               activeView === 'maintenance_portal'
                 ? 'text-emerald-700 bg-emerald-50/80'
                 : 'text-slate-500'
             }`}
           >
             <Wrench className="w-4 h-4 mb-0.5 shrink-0" />
-            <span className="truncate max-w-full">
+            <span className="leading-tight text-center">
               {maintenanceAuth?.role === 'cleaning' ? 'النظافة' : 'الصيانة'}
             </span>
           </button>
@@ -367,32 +369,32 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             type="button"
             onClick={() => onNavigate('admin_panel')}
-            className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold transition ${
+            className={`flex-1 min-w-0 flex flex-col items-center justify-center py-1 px-1 rounded-xl text-[10px] font-bold transition ${
               activeView === 'admin_panel'
                 ? 'text-slate-900 bg-slate-100'
                 : 'text-slate-500'
             }`}
           >
             <Sliders className="w-4 h-4 mb-0.5 shrink-0" />
-            <span className="truncate max-w-full">المشرف</span>
+            <span className="leading-tight text-center">المشرف</span>
           </button>
         ) : canOpenOfficialReport ? (
           <button
             type="button"
             onClick={onOpenReportModal}
-            className="flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold text-slate-500"
+            className="flex-1 min-w-0 flex flex-col items-center justify-center py-1 px-1 rounded-xl text-[10px] font-bold text-slate-500"
           >
             <FileText className="w-4 h-4 mb-0.5 shrink-0" />
-            <span className="truncate max-w-full">التقرير</span>
+            <span className="leading-tight text-center">التقرير</span>
           </button>
         ) : isPublicGuest ? (
           <button
             type="button"
             onClick={() => onOpenLogin?.('leader')}
-            className="flex-1 min-w-0 flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold text-blue-600"
+            className="flex-1 min-w-0 flex flex-col items-center justify-center py-1 px-1 rounded-xl text-[10px] font-bold text-blue-600"
           >
             <LogIn className="w-4 h-4 mb-0.5 shrink-0" />
-            <span className="truncate max-w-full">دخول</span>
+            <span className="leading-tight text-center">دخول</span>
           </button>
         ) : null}
       </nav>

@@ -6,8 +6,18 @@ import React, { useState } from 'react';
 import { BuildingInfo, FixtureEvaluation } from '../../types/hostel';
 import { computeCampusStats } from '../../utils/healthScore';
 import { fetchFacilityMediaOnDemand } from '../../services/firestoreService';
-import { ImageViewerModal } from '../Common/ImageViewerModal';
-import { Printer, X, ShieldCheck, AlertTriangle, Maximize2, FileText, Eye } from 'lucide-react';
+import { ImageViewerModal, MediaGalleryEntry } from '../Common/ImageViewerModal';
+import {
+  Printer,
+  X,
+  ShieldCheck,
+  AlertTriangle,
+  Maximize2,
+  FileText,
+  Image as ImageIcon,
+  DownloadCloud,
+  Loader2,
+} from 'lucide-react';
 
 interface OfficialReportModalProps {
   buildings: BuildingInfo[];
@@ -22,28 +32,66 @@ export const OfficialReportModal: React.FC<OfficialReportModalProps> = ({
   scopedBuildingId,
   onClose,
 }) => {
-  const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
-  const [loadedReportPhotos, setLoadedReportPhotos] = useState<Record<string, string>>({});
+  const [previewGallery, setPreviewGallery] = useState<{
+    items: MediaGalleryEntry[];
+    initialIndex: number;
+    title: string;
+  } | null>(null);
+  const [loadedReportPhotos, setLoadedReportPhotos] = useState<
+    Record<string, MediaGalleryEntry[]>
+  >({});
   const [loadingPhotoId, setLoadingPhotoId] = useState<string | null>(null);
 
   const handleLoadReportPhoto = async (item: FixtureEvaluation) => {
-    const existing = loadedReportPhotos[item.id] || item.photoBase64;
-    if (existing) {
-      setSelectedPhoto(existing);
+    const existingList = loadedReportPhotos[item.id];
+    if (existingList && existingList.length > 0) {
+      setPreviewGallery({
+        items: existingList,
+        initialIndex: 0,
+        title: `توثيق ${item.id}`,
+      });
       return;
     }
-    if (!item.hasPhoto && !(item.mediaCount && item.mediaCount > 0)) return;
+    if (!item.hasPhoto && !(item.mediaCount && item.mediaCount > 0) && !item.photoBase64) return;
 
     setLoadingPhotoId(item.id);
     try {
       const vault = await fetchFacilityMediaOnDemand(item.id);
-      const url =
-        vault?.photoBase64 ||
-        vault?.media?.find((m) => m.type === 'image')?.url ||
-        vault?.closurePhotoBase64;
-      if (url) {
-        setLoadedReportPhotos((prev) => ({ ...prev, [item.id]: url }));
-        setSelectedPhoto(url);
+      const entries: MediaGalleryEntry[] = [];
+      const baseList =
+        vault?.media && vault.media.length > 0
+          ? vault.media
+          : vault?.photoBase64
+          ? [{ id: 'p0', type: 'image' as const, url: vault.photoBase64, capturedAt: vault.updatedAt }]
+          : item.photoBase64
+          ? [{ id: 'p0', type: 'image' as const, url: item.photoBase64, capturedAt: item.updatedAt }]
+          : [];
+
+      baseList.forEach((m, idx) => {
+        if (m?.url) {
+          entries.push({
+            url: m.url,
+            type: m.type || 'image',
+            name: m.name,
+            label: baseList.length > 1 ? `صورة قبل الإصلاح (#${idx + 1})` : 'صورة العطل',
+          });
+        }
+      });
+      if (vault?.closurePhotoBase64) {
+        entries.push({
+          url: vault.closurePhotoBase64,
+          type: 'image',
+          label: 'صورة بعد الإصلاح',
+        });
+      }
+
+      if (entries.length > 0) {
+        setLoadedReportPhotos((prev) => ({ ...prev, [item.id]: entries }));
+        setPreviewGallery({
+          items: entries,
+          initialIndex: 0,
+          title: `توثيق ${item.id}`,
+        });
       }
     } finally {
       setLoadingPhotoId(null);
@@ -229,16 +277,23 @@ export const OfficialReportModal: React.FC<OfficialReportModalProps> = ({
               </h3>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {criticalItems.map((item) => {
-                  const photoUrl = loadedReportPhotos[item.id] || item.photoBase64;
+                  const loadedList = loadedReportPhotos[item.id];
+                  const photoUrl =
+                    loadedList?.find((x) => x.type === 'image')?.url || item.photoBase64;
                   const itemHasPhoto = Boolean(
                     photoUrl || item.hasPhoto || (item.mediaCount && item.mediaCount > 0)
                   );
+                  const photoCount = loadedList?.length || item.mediaCount || 1;
                   return (
                     <div
                       key={item.id}
                       onClick={() => itemHasPhoto && handleLoadReportPhoto(item)}
-                      className={`border border-slate-200 rounded-xl overflow-hidden bg-white shadow-xs ${
-                        itemHasPhoto ? 'cursor-pointer group hover:shadow-md transition' : ''
+                      className={`rounded-xl overflow-hidden bg-white shadow-xs ${
+                        itemHasPhoto
+                          ? photoUrl
+                            ? 'border border-slate-200 cursor-pointer group hover:shadow-md transition'
+                            : 'border-2 border-dashed border-slate-300 cursor-pointer group hover:border-blue-400 transition'
+                          : 'border border-slate-200'
                       }`}
                     >
                       {photoUrl ? (
@@ -248,18 +303,37 @@ export const OfficialReportModal: React.FC<OfficialReportModalProps> = ({
                             alt={item.id}
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                           />
+                          {photoCount > 1 && (
+                            <span className="absolute top-1 left-1 bg-blue-600 text-white px-1.5 py-0.5 rounded text-[9px] font-mono font-bold">
+                              {photoCount} صور
+                            </span>
+                          )}
                           <div className="absolute bottom-1 right-1 bg-black/60 backdrop-blur-xs text-white p-1 rounded-md pointer-events-none transition group-hover:bg-blue-600">
                             <Maximize2 className="w-3 h-3" />
                           </div>
                         </div>
                       ) : itemHasPhoto ? (
-                        <div className="w-full h-24 bg-blue-50/60 hover:bg-blue-50 flex flex-col items-center justify-center gap-1 text-[10px] text-blue-700 font-bold px-2 text-center">
-                          <Eye className="w-4 h-4 text-blue-600" />
-                          <span>
-                            {loadingPhotoId === item.id
-                              ? 'جاري تحميل الصورة...'
-                              : 'اضغط لتحميل ومعاينة الصورة'}
+                        <div className="relative w-full h-24 bg-slate-100 hover:bg-blue-50/70 flex flex-col items-center justify-center gap-1 text-[10px] text-slate-700 font-bold px-2 text-center">
+                          <div className="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center">
+                            {loadingPhotoId === item.id ? (
+                              <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
+                            ) : (
+                              <ImageIcon className="w-4 h-4 text-slate-500" />
+                            )}
+                          </div>
+                          <span className="inline-flex items-center gap-1 leading-tight">
+                            {loadingPhotoId !== item.id && (
+                              <DownloadCloud className="w-3 h-3 text-blue-600 shrink-0" />
+                            )}
+                            <span>
+                              {loadingPhotoId === item.id ? 'جاري التحميل...' : 'صورة للتحميل'}
+                            </span>
                           </span>
+                          {photoCount > 1 && (
+                            <span className="absolute top-1 left-1 bg-blue-600 text-white px-1.5 py-0.5 rounded text-[9px] font-mono font-bold">
+                              {photoCount} صور
+                            </span>
+                          )}
                         </div>
                       ) : (
                         <div className="w-full h-24 bg-slate-50 flex flex-col items-center justify-center gap-1 text-[10px] text-slate-400">
@@ -268,10 +342,10 @@ export const OfficialReportModal: React.FC<OfficialReportModalProps> = ({
                         </div>
                       )}
                       <div className="p-2 text-[10px] border-t border-slate-100">
-                        <div className="font-mono font-bold text-blue-700 truncate">
+                        <div className="font-mono font-bold text-blue-700 leading-snug break-all">
                           {item.id}
                         </div>
-                        <div className="text-slate-500 truncate mt-0.5">
+                        <div className="text-slate-500 leading-snug mt-0.5">
                           {item.defects.join('، ') || 'خلل تشغيلي'}
                         </div>
                       </div>
@@ -309,12 +383,14 @@ export const OfficialReportModal: React.FC<OfficialReportModalProps> = ({
         </div>
       </div>
 
-      {/* Interactive Full-Screen Image Lightbox with Pinch-to-Zoom */}
-      {selectedPhoto && (
+      {/* Interactive Full-Screen Multi-Photo Lightbox with Pinch-to-Zoom */}
+      {previewGallery && (
         <ImageViewerModal
-          src={selectedPhoto}
-          title="توثيق تقرير المعاينة"
-          onClose={() => setSelectedPhoto(null)}
+          src={previewGallery.items[previewGallery.initialIndex]?.url || null}
+          items={previewGallery.items}
+          initialIndex={previewGallery.initialIndex}
+          title={previewGallery.title}
+          onClose={() => setPreviewGallery(null)}
         />
       )}
     </div>

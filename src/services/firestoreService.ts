@@ -1542,6 +1542,51 @@ export async function updateMaximoTicketInfo(
   );
 }
 
+/**
+ * Transitions a newly opened ticket directly to "قيد العمل / In Progress"
+ * when maintenance/cleaning personnel start handling it even before a Maximo # is issued.
+ */
+export async function startMaintenanceTicketWork(
+  evaluation: FixtureEvaluation,
+  params: {
+    actorName: string;
+    actorRole: 'maintenance' | 'cleaning' | 'admin';
+  }
+): Promise<CloudSaveResult> {
+  const callerRole = getActiveCallerRole();
+  if (callerRole !== 'admin' && callerRole !== 'maintenance' && callerRole !== 'cleaning') {
+    return {
+      success: false,
+      cloudSynced: false,
+      cloudError: 'غير مصرح: هذا الإجراء مخصص لفريق الصيانة أو النظافة والمشرف العام.',
+      code: 'permission-denied',
+    };
+  }
+
+  const nowIso = new Date().toISOString();
+  const prevTicket = evaluation.maintenanceTicket || { status: 'open' };
+  const nextTicket: MaintenanceTicketInfo = {
+    ...prevTicket,
+    status: 'in_progress',
+    registeredAt: prevTicket.registeredAt || nowIso,
+    registeredBy: prevTicket.registeredBy || params.actorName,
+  };
+
+  return saveEvaluation(
+    {
+      ...evaluation,
+      maintenanceTicket: nextTicket,
+    },
+    {
+      action: 'maximo_registered',
+      actorName: params.actorName,
+      actorRole: params.actorRole === 'cleaning' ? 'cleaning' : 'maintenance',
+      notes: `تم استلام البلاغ والبدء في المعالجة الميدانية (قيد العمل)`,
+      media: [],
+    }
+  );
+}
+
 export async function closeMaintenanceTicket(
   evaluation: FixtureEvaluation,
   params: {
@@ -1762,13 +1807,31 @@ export async function appendFacilityChatMessage(
       ]
     : [];
 
-  return saveEvaluation(evaluation, {
-    action: 'chat_message',
-    actorName: params.actorName,
-    actorRole: params.actorRole,
-    notes: params.message.trim(),
-    media: chatMedia,
-  });
+  const nextTicket: MaintenanceTicketInfo | undefined =
+    (params.actorRole === 'maintenance' || params.actorRole === 'cleaning') &&
+    (!evaluation.maintenanceTicket ||
+      evaluation.maintenanceTicket.status === 'open')
+      ? {
+          ...(evaluation.maintenanceTicket || { status: 'in_progress' }),
+          status: 'in_progress',
+          registeredAt: evaluation.maintenanceTicket?.registeredAt || nowIso,
+          registeredBy: evaluation.maintenanceTicket?.registeredBy || params.actorName,
+        }
+      : evaluation.maintenanceTicket;
+
+  return saveEvaluation(
+    {
+      ...evaluation,
+      maintenanceTicket: nextTicket,
+    },
+    {
+      action: 'chat_message',
+      actorName: params.actorName,
+      actorRole: params.actorRole,
+      notes: params.message.trim(),
+      media: chatMedia,
+    }
+  );
 }
 
 // ----------------------------------------------------------------------------

@@ -412,10 +412,10 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
         />
       ) : (
         <>
-          {/* 3. Sticky Mobile-First Navigation: Floor -> Wing -> Category */}
-          <div className="sticky top-14 z-30 bg-white/95 backdrop-blur-md border border-slate-200 rounded-2xl p-3 shadow-sm flex flex-col gap-2.5">
+          {/* 3. Mobile-First Navigation: Floor -> Wing -> Category (No sticky collision) */}
+          <div className="relative z-20 bg-white border border-slate-200 rounded-2xl p-3 shadow-sm flex flex-col gap-2.5">
             {/* Floor Pills */}
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+            <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-[11px] font-bold text-slate-500 shrink-0 ml-1">الدور:</span>
               {Array.from({ length: floorsCount }, (_, i) => i + 1).map((floorNum) => (
                 <button
@@ -434,7 +434,7 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
             </div>
 
             {/* Wing & Building Zone Pills (Floor 1 shows Apt 1 & Apt 2 instead of Wing 4 + Office/Corridors/Roof) */}
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+            <div className="flex flex-wrap items-center gap-1.5 py-0.5">
               {availableZones.map((wId) => {
                 const isSelected = selectedWing === wId;
                 const isSpecialZone = wId >= 5;
@@ -465,8 +465,8 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
             </div>
 
             {/* Category Tabs + Easy "+ إضافة مرفق" Button */}
-            <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100 overflow-x-auto no-scrollbar">
-              <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+              <div className="flex flex-wrap items-center gap-1.5">
                 {availableCategoriesForZone.map((cat) => (
                   <button
                     key={cat.code}

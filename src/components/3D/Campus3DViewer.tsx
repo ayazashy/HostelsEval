@@ -826,7 +826,7 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
       <div ref={mountRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
 
       {/* Top Floating Action Controls */}
-      <div className="absolute top-3.5 right-3.5 left-3.5 flex justify-between items-center gap-2 pointer-events-none">
+      <div className="absolute top-3.5 right-3.5 left-3.5 flex flex-wrap justify-between items-center gap-2 pointer-events-none">
         {/* Quick Jump Selector */}
         <div className="pointer-events-auto">
           <select
@@ -884,11 +884,6 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
             <span className="hidden sm:inline">{autoRotate ? 'إيقاف الدوران' : 'دوران'}</span>
           </button>
         </div>
-      </div>
-
-      {/* Subtle Mobile Gesture Hint */}
-      <div className="absolute bottom-2.5 right-3 pointer-events-none text-[10px] text-slate-400 font-medium bg-white/70 backdrop-blur-xs px-2 py-0.5 rounded-lg border border-slate-200/50 hidden sm:block">
-        اسحب للتدوير • بإصبعين للتكبير • انقر للمعاينة
       </div>
 
       {/* Interactive Hover Tooltip */}
@@ -955,9 +950,9 @@ export const Campus3DViewer: React.FC<Campus3DViewerProps> = ({
         </div>
       )}
 
-      {/* Bottom Legend & Guidance */}
+      {/* Bottom Legend & Guidance (Single non-overlapping bar) */}
       <div className="absolute bottom-3 right-4 left-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 pointer-events-none text-xs">
-        <div className="bg-white/95 backdrop-blur-sm px-3.5 py-1.5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4 pointer-events-auto">
+        <div className="bg-white/95 backdrop-blur-sm px-3.5 py-1.5 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center gap-3 sm:gap-4 pointer-events-auto">
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-slate-400" />
             <span className="text-slate-700 font-medium">غير مفحوص</span>

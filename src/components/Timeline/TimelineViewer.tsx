@@ -29,7 +29,8 @@ import {
   Eye,
   X,
 } from 'lucide-react';
-import { ImageViewerModal } from '../Common/ImageViewerModal';
+import { ImageViewerModal, MediaGalleryEntry } from '../Common/ImageViewerModal';
+import { OnDemandPhotoSlot } from '../Common/OnDemandPhotoSlot';
 
 interface TimelineViewerProps {
   buildingId?: string; // Optional: filter by building
@@ -47,25 +48,64 @@ export const TimelineViewer: React.FC<TimelineViewerProps> = ({
   const [entries, setEntries] = useState<EvaluationHistoryEntry[]>([]);
   const [filter, setFilter] = useState<'all' | 'unresolved' | 'resolved'>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+  const [previewGallery, setPreviewGallery] = useState<{
+    items: MediaGalleryEntry[];
+    initialIndex: number;
+    title: string;
+  } | null>(null);
+  const [loadedTimelinePhotos, setLoadedTimelinePhotos] = useState<Record<string, MediaGalleryEntry[]>>({});
   const [loadingEntryId, setLoadingEntryId] = useState<string | null>(null);
 
-  const handleOpenTimelinePhoto = async (entry: EvaluationHistoryEntry) => {
-    if (entry.photoBase64) {
-      setSelectedPhoto(entry.photoBase64);
+  const handleOpenTimelinePhoto = async (entry: EvaluationHistoryEntry, idx: number = 0) => {
+    const cached = loadedTimelinePhotos[entry.id];
+    if (cached && cached.length > 0) {
+      setPreviewGallery({
+        items: cached,
+        initialIndex: Math.max(0, Math.min(idx, cached.length - 1)),
+        title: `توثيق ${entry.fixtureId}`,
+      });
       return;
     }
+
     setLoadingEntryId(entry.id);
     try {
       const vault = await fetchFacilityMediaOnDemand(entry.fixtureId);
-      const historyImg = vault?.historyMediaById?.[entry.id]?.find((m) => m.type === 'image')?.url;
-      const fallbackImg =
-        historyImg ||
-        vault?.photoBase64 ||
-        vault?.media?.find((m) => m.type === 'image')?.url ||
-        vault?.closurePhotoBase64;
-      if (fallbackImg) {
-        setSelectedPhoto(fallbackImg);
+      const evMedia = vault?.historyMediaById?.[entry.id];
+      const rawList =
+        evMedia && evMedia.length > 0
+          ? evMedia
+          : vault?.media && vault.media.length > 0
+          ? vault.media
+          : vault?.photoBase64
+          ? [{ id: 'p0', type: 'image' as const, url: vault.photoBase64, capturedAt: vault.updatedAt }]
+          : entry.photoBase64
+          ? [{ id: 'p0', type: 'image' as const, url: entry.photoBase64, capturedAt: entry.timestamp }]
+          : [];
+
+      const galleryItems: MediaGalleryEntry[] = rawList
+        .filter((m) => !!m?.url)
+        .map((m, i) => ({
+          url: m.url,
+          type: m.type || 'image',
+          name: m.name,
+          label: rawList.length > 1 ? `صورة التوثيق (#${i + 1})` : 'صورة توثيق المرفق',
+        }));
+
+      if (vault?.closurePhotoBase64 && galleryItems.every((g) => g.url !== vault.closurePhotoBase64)) {
+        galleryItems.push({
+          url: vault.closurePhotoBase64,
+          type: 'image',
+          label: 'صورة الصيانة بعد الإصلاح',
+        });
+      }
+
+      if (galleryItems.length > 0) {
+        setLoadedTimelinePhotos((prev) => ({ ...prev, [entry.id]: galleryItems }));
+        setPreviewGallery({
+          items: galleryItems,
+          initialIndex: Math.max(0, Math.min(idx, galleryItems.length - 1)),
+          title: `توثيق ${entry.fixtureId}`,
+        });
       }
     } finally {
       setLoadingEntryId(null);
@@ -333,22 +373,27 @@ export const TimelineViewer: React.FC<TimelineViewerProps> = ({
                       )}
                     </div>
 
-                    {/* On-Demand Photo Button (Zero Base64 pre-loaded in Timeline List) */}
-                    {(entry.hasPhoto || entry.photoBase64) && (
-                      <div className="shrink-0">
-                        <button
-                          type="button"
-                          disabled={loadingEntryId === entry.id}
-                          onClick={() => handleOpenTimelinePhoto(entry)}
-                          className="px-3 py-2 rounded-xl border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-800 text-xs font-bold inline-flex items-center gap-1.5 shadow-2xs cursor-pointer transition"
-                        >
-                          <Eye className="w-3.5 h-3.5 text-blue-600" />
-                          <span>
-                            {loadingEntryId === entry.id
-                              ? 'جاري التحميل...'
-                              : 'عرض الصورة (عند الطلب)'}
-                          </span>
-                        </button>
+                    {/* On-Demand Photo Thumbnails (Not-Loaded Photo Frames) */}
+                    {(entry.hasPhoto || entry.photoBase64 || (entry.mediaMeta && entry.mediaMeta.length > 0)) && (
+                      <div className="shrink-0 flex flex-wrap gap-1.5">
+                        {(entry.mediaMeta && entry.mediaMeta.length > 0
+                          ? entry.mediaMeta
+                          : [{ id: 'tl_0', type: 'image' as const }]
+                        ).map((meta, mIdx, arr) => (
+                          <OnDemandPhotoSlot
+                            key={meta.id || mIdx}
+                            loadedUrl={
+                              loadedTimelinePhotos[entry.id]?.[mIdx]?.url ||
+                              (mIdx === 0 ? entry.photoBase64 : undefined)
+                            }
+                            mediaType={meta.type || 'image'}
+                            badgeLabel={arr.length > 1 ? `صورة #${mIdx + 1}` : 'صورة موثقة'}
+                            badgeTone="slate"
+                            sizeClass="w-20 h-20"
+                            isLoading={loadingEntryId === entry.id}
+                            onClick={() => handleOpenTimelinePhoto(entry, mIdx)}
+                          />
+                        ))}
                       </div>
                     )}
                   </div>
@@ -475,12 +520,14 @@ export const TimelineViewer: React.FC<TimelineViewerProps> = ({
         </div>
       )}
 
-      {/* Interactive Full-Screen Image Lightbox with Pinch-to-Zoom */}
-      {selectedPhoto && (
+      {/* Interactive Full-Screen Multi-Photo Lightbox with Pinch-to-Zoom */}
+      {previewGallery && (
         <ImageViewerModal
-          src={selectedPhoto}
-          title="توثيق بلاغ الصيانة"
-          onClose={() => setSelectedPhoto(null)}
+          src={previewGallery.items[previewGallery.initialIndex]?.url || null}
+          items={previewGallery.items}
+          initialIndex={previewGallery.initialIndex}
+          title={previewGallery.title}
+          onClose={() => setPreviewGallery(null)}
         />
       )}
     </div>
