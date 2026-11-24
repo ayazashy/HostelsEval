@@ -9,9 +9,15 @@ import { FacilityMediaItem } from '../types/hostel';
 // Firestore hard limit is 1,048,576 bytes (1 MiB) including field keys & doc metadata
 export const FIRESTORE_HARD_LIMIT_BYTES = 1048576;
 // Safe threshold per Firestore document before dynamically opening a linked overflow document (_PART_2, _PART_3...)
-export const SAFE_FIRESTORE_DOC_BYTES = 850 * 1024; // ~870,400 bytes
+export const SAFE_FIRESTORE_DOC_BYTES = 800 * 1024; // ~819,200 bytes
 // Maximum allowed UTF-8/Base64 byte size for a SINGLE atomic attachment after compression
-export const MAX_SINGLE_FILE_BASE64_BYTES = 840 * 1024; // ~860,160 bytes Base64 (~630 KB binary)
+export const MAX_SINGLE_FILE_BASE64_BYTES = 820 * 1024; // ~839,680 bytes Base64 (~615 KB binary)
+
+// Firestore hard limit for index entries per document is 40,000.
+// Every scalar map property or array element creates 2 index entries (1 ASC + 1 DESC).
+export const FIRESTORE_HARD_LIMIT_INDEX_ENTRIES = 40000;
+// Strict safety ceiling (25% of hard limit) before packing nested maps/arrays into JSON strings or sharding
+export const SAFE_FIRESTORE_INDEX_ENTRIES = 10000;
 
 export interface CompressedImageResult {
   base64: string;
@@ -33,11 +39,87 @@ export function estimateFirestoreDocSizeBytes(payload: unknown): number {
       typeof TextEncoder !== 'undefined'
         ? new TextEncoder().encode(json).length
         : json.length * 1.1;
-    // Add 1.5 KB safety margin for Firestore document path, field names, and protobuf framing
-    return Math.ceil(utf8Len + 1536);
+    // Add 2 KB safety margin for Firestore document path, field names, and protobuf framing
+    return Math.ceil(utf8Len + 2048);
   } catch {
     return 2048;
   }
+}
+
+/**
+ * Accurately estimates the number of single-field index entries Cloud Firestore will generate
+ * for a document payload.
+ *
+ * In Cloud Firestore:
+ * - The document name (__name__) uses 1–2 index entries.
+ * - Every primitive scalar field (string, number, boolean, null) at any nested map path
+ *   generates 2 index entries (1 Ascending + 1 Descending).
+ * - Every primitive element in an array generates 2 index entries (1 ASC + 1 DESC),
+ *   and every object inside an array generates 2 index entries per primitive leaf field.
+ * - A serialized JSON string (`typeof val === 'string'`), no matter how many objects are encoded
+ *   inside the JSON string, is treated by Firestore as a SINGLE scalar string field = ONLY 2 index entries!
+ */
+export function estimateFirestoreIndexEntries(payload: unknown): number {
+  const countNode = (node: unknown, depth: number): number => {
+    if (depth > 25 || node === undefined) return 0;
+    if (
+      node === null ||
+      typeof node === 'string' ||
+      typeof node === 'number' ||
+      typeof node === 'boolean'
+    ) {
+      // 1 Ascending + 1 Descending single-field index entry
+      return 2;
+    }
+    if (Array.isArray(node)) {
+      if (node.length === 0) return 2;
+      let sum = 0;
+      for (let i = 0; i < node.length; i++) {
+        sum += countNode(node[i], depth + 1);
+      }
+      return sum;
+    }
+    if (typeof node === 'object') {
+      const keys = Object.keys(node as Record<string, unknown>);
+      if (keys.length === 0) return 2;
+      let sum = 0;
+      for (let i = 0; i < keys.length; i++) {
+        const val = (node as Record<string, unknown>)[keys[i]];
+        if (val !== undefined) {
+          sum += countNode(val, depth + 1);
+        }
+      }
+      return sum;
+    }
+    return 2;
+  };
+
+  // +4 for __name__ and document metadata overhead
+  return 4 + countNode(payload, 0);
+}
+
+/**
+ * Evaluates both Firestore hard limits (1 MiB byte size and 40,000 index entries)
+ * against our strict safety thresholds (800 KB and 10,000 index entries).
+ */
+export function inspectFirestorePayloadLimits(payload: unknown): {
+  bytes: number;
+  indexEntries: number;
+  exceedsBytes: boolean;
+  exceedsIndexEntries: boolean;
+  isSafe: boolean;
+} {
+  const bytes = estimateFirestoreDocSizeBytes(payload);
+  const indexEntries = estimateFirestoreIndexEntries(payload);
+  const exceedsBytes = bytes > SAFE_FIRESTORE_DOC_BYTES;
+  const exceedsIndexEntries = indexEntries > SAFE_FIRESTORE_INDEX_ENTRIES;
+  return {
+    bytes,
+    indexEntries,
+    exceedsBytes,
+    exceedsIndexEntries,
+    isSafe: !exceedsBytes && !exceedsIndexEntries,
+  };
 }
 
 /**

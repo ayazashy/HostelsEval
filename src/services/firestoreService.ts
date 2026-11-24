@@ -42,13 +42,17 @@ import {
 import { runWithNetworkProgress } from '../utils/networkProgressStore';
 import {
   estimateFirestoreDocSizeBytes,
+  estimateFirestoreIndexEntries,
+  inspectFirestorePayloadLimits,
   SAFE_FIRESTORE_DOC_BYTES,
+  SAFE_FIRESTORE_INDEX_ENTRIES,
   MAX_SINGLE_FILE_BASE64_BYTES,
 } from '../utils/imageCompressor';
 
 export const EVALUATIONS_COLLECTION = 'evaluations';
 export const LOCAL_STORAGE_KEY = 'hostels_eval_local_cache';
 export const CAMPUS_LIGHT_INDEX_DOC_ID = 'GLOBAL_CAMPUS_LIGHT_INDEX';
+export const CAMPUS_LIGHT_INDEX_SCHEMA_VERSION = 3;
 export const MEDIA_DOC_PREFIX = 'MEDIA_';
 
 // ----------------------------------------------------------------------------
@@ -59,6 +63,7 @@ const mediaVaultLruCache = new Map<string, FacilityMediaVaultDoc>();
 const migratedLegacyIds = new Set<string>();
 let memoryEvalCache: Record<string, FixtureEvaluation> | null = null;
 let isBackgroundMigrationRunning = false;
+let hasHydratedCampusCache = false;
 
 export function getMediaVaultFromLru(fixtureId: string): FacilityMediaVaultDoc | undefined {
   if (!fixtureId) return undefined;
@@ -204,6 +209,31 @@ export function stripHeavyMediaFromEvaluation(data: any): FixtureEvaluation {
     delete copy.secretCode;
   }
 
+  // Unpack JSON-serialized historyJson / mediaMetaJson if packed by Firestore Index Guard
+  if (typeof copy.historyJson === 'string') {
+    if (!Array.isArray(copy.history)) {
+      try {
+        const parsedHist = JSON.parse(copy.historyJson);
+        if (Array.isArray(parsedHist)) {
+          copy.history = parsedHist;
+        }
+      } catch {}
+    }
+    delete copy.historyJson;
+  }
+
+  if (typeof copy.mediaMetaJson === 'string') {
+    if (!Array.isArray(copy.mediaMeta)) {
+      try {
+        const parsedMeta = JSON.parse(copy.mediaMetaJson);
+        if (Array.isArray(parsedMeta)) {
+          copy.mediaMeta = parsedMeta;
+        }
+      } catch {}
+    }
+    delete copy.mediaMetaJson;
+  }
+
   const rawMedia: FacilityMediaItem[] = Array.isArray(copy.media) ? copy.media : [];
   const existingMeta: FacilityMediaMeta[] = Array.isArray(copy.mediaMeta) ? copy.mediaMeta : [];
 
@@ -293,6 +323,46 @@ export function stripHeavyMediaFromEvaluation(data: any): FixtureEvaluation {
   return copy as FixtureEvaluation;
 }
 
+/**
+ * Monotonic timestamp-aware conflict resolver:
+ * Never allows a stale index or delayed snapshot to overwrite a newer local/remote evaluation
+ * (e.g., right after adding a Maximo number or closing a ticket), while preserving fuller history arrays.
+ */
+export function pickNewerEvaluation(
+  existing: FixtureEvaluation | undefined,
+  incoming: FixtureEvaluation
+): FixtureEvaluation {
+  if (!existing) return incoming;
+  const existingTs = existing.updatedAt ? Date.parse(existing.updatedAt) : 0;
+  const incomingTs = incoming.updatedAt ? Date.parse(incoming.updatedAt) : 0;
+
+  const winner =
+    Number.isFinite(existingTs) && Number.isFinite(incomingTs) && existingTs > incomingTs
+      ? existing
+      : incoming;
+  const loser = winner === existing ? incoming : existing;
+
+  // Preserve longer history array if winner came from the compact index (which slices history to 5 items)
+  if (Array.isArray(loser.history) && loser.history.length > (winner.history?.length || 0)) {
+    const byId = new Map<string, FacilityHistoryEvent>();
+    for (const h of winner.history || []) {
+      if (h && h.id) byId.set(h.id, h);
+    }
+    for (const h of loser.history) {
+      if (h && h.id && !byId.has(h.id)) byId.set(h.id, h);
+    }
+    const mergedHist = Array.from(byId.values())
+      .sort((a, b) => Date.parse(b.timestamp || '') - Date.parse(a.timestamp || ''))
+      .slice(0, 25);
+    return {
+      ...winner,
+      history: mergedHist,
+    };
+  }
+
+  return winner;
+}
+
 export interface CloudSaveResult {
   success: boolean;
   cloudSynced: boolean;
@@ -353,7 +423,7 @@ export function getLocalCache(): Record<string, FixtureEvaluation> {
         key !== 'undefined' &&
         key !== 'null' &&
         !key.startsWith(MEDIA_DOC_PREFIX) &&
-        key !== CAMPUS_LIGHT_INDEX_DOC_ID &&
+        !key.startsWith(CAMPUS_LIGHT_INDEX_DOC_ID) &&
         val &&
         typeof val === 'object' &&
         typeof (val as any).buildingId === 'string' &&
@@ -415,7 +485,7 @@ export function saveToLocalCache(evaluation: FixtureEvaluation): void {
     !evaluation.id ||
     !evaluation.buildingId ||
     evaluation.id.startsWith(MEDIA_DOC_PREFIX) ||
-    evaluation.id === CAMPUS_LIGHT_INDEX_DOC_ID ||
+    evaluation.id.startsWith(CAMPUS_LIGHT_INDEX_DOC_ID) ||
     evaluation.buildingId === 'MEDIA_VAULT' ||
     evaluation.buildingId === 'CAMPUS_GLOBAL'
   ) {
@@ -424,7 +494,7 @@ export function saveToLocalCache(evaluation: FixtureEvaluation): void {
   try {
     const cache = getLocalCache();
     const slim = stripHeavyMediaFromEvaluation(evaluation);
-    cache[slim.id] = slim;
+    cache[slim.id] = pickNewerEvaluation(cache[slim.id], slim);
     memoryEvalCache = cache;
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(cache));
   } catch (err) {
@@ -457,7 +527,7 @@ export function saveBatchToLocalCache(
         !evaluation.id ||
         !evaluation.buildingId ||
         evaluation.id.startsWith(MEDIA_DOC_PREFIX) ||
-        evaluation.id === CAMPUS_LIGHT_INDEX_DOC_ID ||
+        evaluation.id.startsWith(CAMPUS_LIGHT_INDEX_DOC_ID) ||
         evaluation.buildingId === 'MEDIA_VAULT' ||
         evaluation.buildingId === 'CAMPUS_GLOBAL'
       ) {
@@ -470,7 +540,8 @@ export function saveBatchToLocalCache(
         }
         continue;
       }
-      cache[evaluation.id] = stripHeavyMediaFromEvaluation(evaluation);
+      const incoming = stripHeavyMediaFromEvaluation(evaluation);
+      cache[evaluation.id] = pickNewerEvaluation(cache[evaluation.id], incoming);
       changed = true;
     }
 
@@ -498,11 +569,19 @@ export function removeFromLocalCache(id: string): void {
 }
 
 /**
- * Helper to recursively strip any undefined values from an object or array before sending to Firestore
- * (Firestore SDK throws an error if any field in an object is undefined).
+ * Helper to recursively sanitize any payload before sending to Firestore:
+ * - Strips undefined properties
+ * - Replaces NaN / Infinity with 0
+ * - Strips empty string object keys ("") which Firestore rejects
  */
 export function stripUndefinedValues<T>(obj: T): T {
-  if (obj === null || obj === undefined || typeof obj !== 'object') {
+  if (obj === null || obj === undefined) {
+    return obj;
+  }
+  if (typeof obj === 'number') {
+    return (Number.isFinite(obj) ? obj : 0) as unknown as T;
+  }
+  if (typeof obj !== 'object') {
     return obj;
   }
   if (Array.isArray(obj)) {
@@ -512,11 +591,50 @@ export function stripUndefinedValues<T>(obj: T): T {
   }
   const clean: any = {};
   for (const [key, val] of Object.entries(obj as Record<string, any>)) {
-    if (val !== undefined) {
+    if (key && key.trim().length > 0 && val !== undefined) {
       clean[key] = stripUndefinedValues(val);
     }
   }
   return clean;
+}
+
+/**
+ * Universal Firestore Document Capacity & Index-Entry Guard for Individual Evaluations (`/evaluations/{fixtureId}`).
+ * Guarantees that no single facility evaluation document can ever exceed:
+ * 1. Firestore's 40,000 index entries limit (keeps index entries < 1,200 by packing `historyJson` / `mediaMetaJson` when needed)
+ * 2. Firestore's 1 MiB byte size limit (keeps byte size < 800 KB)
+ */
+export function guardEvaluationDocumentPayload(rawPayload: Record<string, any>): Record<string, any> {
+  const clean = stripUndefinedValues({ ...rawPayload });
+
+  // If history or mediaMeta pushes index entries above 1,200 or byte size above 200 KB,
+  // pack history and mediaMeta into JSON string fields (2 index entries each instead of hundreds!)
+  const initialLimits = inspectFirestorePayloadLimits(clean);
+  if (initialLimits.indexEntries > 1200 || initialLimits.bytes > 200 * 1024) {
+    if (Array.isArray(clean.history)) {
+      clean.historyJson = JSON.stringify(clean.history.slice(0, 20));
+      delete clean.history;
+    }
+    if (Array.isArray(clean.mediaMeta)) {
+      clean.mediaMetaJson = JSON.stringify(clean.mediaMeta.slice(0, 16));
+      delete clean.mediaMeta;
+    }
+  }
+
+  // Final check: if still exceeding 800 KB (e.g. abnormally huge notes/history), trim historyJson further
+  const afterLimits = inspectFirestorePayloadLimits(clean);
+  if (!afterLimits.isSafe && typeof clean.historyJson === 'string') {
+    try {
+      const parsed = JSON.parse(clean.historyJson);
+      if (Array.isArray(parsed)) {
+        clean.historyJson = JSON.stringify(parsed.slice(0, 5));
+      }
+    } catch {
+      delete clean.historyJson;
+    }
+  }
+
+  return stripUndefinedValues(clean);
 }
 
 /**
@@ -577,8 +695,311 @@ function toCompactIndexEntry(evaluation: FixtureEvaluation): FixtureEvaluation {
   const slim = stripHeavyMediaFromEvaluation(evaluation);
   return {
     ...slim,
-    history: slim.history ? slim.history.slice(0, 5) : undefined,
+    mediaMeta: slim.mediaMeta ? slim.mediaMeta.slice(0, 8) : undefined,
+    history: slim.history
+      ? slim.history.slice(0, 5).map((h) => ({
+          ...h,
+          mediaMeta: h.mediaMeta ? h.mediaMeta.slice(0, 4) : undefined,
+        }))
+      : undefined,
   };
+}
+
+/**
+ * Parses all evaluations stored inside a Campus Light Index document (or array of index shards).
+ * Seamlessly supports:
+ * - Schema V3 (`buildingPacks: Record<string, string>` where each value is a JSON-serialized dictionary,
+ *   generating only 2 index entries per pack instead of 40,000+ index entries!)
+ * - Legacy V1 (`evaluationsMap: Record<string, FixtureEvaluation>`) for backward recovery
+ */
+function extractEvaluationsFromIndexShardData(
+  shardData: Record<string, any> | undefined
+): FixtureEvaluation[] {
+  if (!shardData || typeof shardData !== 'object') return [];
+  const byId = new Map<string, FixtureEvaluation>();
+
+  const addRawCandidate = (rawItem: any) => {
+    if (!rawItem || typeof rawItem !== 'object') return;
+    const item = stripHeavyMediaFromEvaluation(rawItem);
+    if (
+      item &&
+      typeof item.id === 'string' &&
+      typeof item.buildingId === 'string' &&
+      !item.id.startsWith(MEDIA_DOC_PREFIX) &&
+      !item.id.startsWith(CAMPUS_LIGHT_INDEX_DOC_ID) &&
+      item.id !== CAMPUS_MAP_CONFIG_DOC_ID &&
+      item.buildingId !== 'MEDIA_VAULT' &&
+      item.buildingId !== 'CAMPUS_GLOBAL'
+    ) {
+      byId.set(item.id, pickNewerEvaluation(byId.get(item.id), item));
+    }
+  };
+
+  // 1. Parse Schema V3 packed strings (`buildingPacks`)
+  if (shardData.buildingPacks && typeof shardData.buildingPacks === 'object') {
+    for (const packVal of Object.values(shardData.buildingPacks)) {
+      if (typeof packVal === 'string' && packVal.trim().startsWith('{')) {
+        try {
+          const parsedMap = JSON.parse(packVal);
+          if (parsedMap && typeof parsedMap === 'object') {
+            for (const rawItem of Object.values(parsedMap)) {
+              addRawCandidate(rawItem);
+            }
+          }
+        } catch {}
+      } else if (packVal && typeof packVal === 'object') {
+        for (const rawItem of Object.values(packVal as Record<string, any>)) {
+          addRawCandidate(rawItem);
+        }
+      }
+    }
+  }
+
+  // 2. Also parse Legacy V1 (`evaluationsMap`) if present
+  if (shardData.evaluationsMap && typeof shardData.evaluationsMap === 'object') {
+    for (const rawItem of Object.values(shardData.evaluationsMap)) {
+      addRawCandidate(rawItem);
+    }
+  }
+
+  return Array.from(byId.values());
+}
+
+/**
+ * Reads `GLOBAL_CAMPUS_LIGHT_INDEX` (and any linked `GLOBAL_CAMPUS_LIGHT_INDEX_PART_2`... overflow shards).
+ * Reports `isUpToDateV3: true` ONLY if the cloud index has already been upgraded to `schemaVersion === 3`
+ * without any legacy `evaluationsMap` bloat.
+ */
+async function readCampusLightIndexSharded(): Promise<{
+  exists: boolean;
+  isUpToDateV3: boolean;
+  evaluations: FixtureEvaluation[];
+  overflowDocIds: string[];
+}> {
+  const primaryRef = doc(db, EVALUATIONS_COLLECTION, CAMPUS_LIGHT_INDEX_DOC_ID);
+  const primarySnap = await getDoc(primaryRef);
+  if (!primarySnap.exists()) {
+    return {
+      exists: false,
+      isUpToDateV3: false,
+      evaluations: [],
+      overflowDocIds: [],
+    };
+  }
+
+  const primaryData = primarySnap.data() || {};
+  const overflowDocIds: string[] = Array.isArray(primaryData.overflowDocIds)
+    ? primaryData.overflowDocIds
+    : [];
+
+  const overflowSnaps =
+    overflowDocIds.length > 0
+      ? await Promise.all(
+          overflowDocIds.map((oid) => getDoc(doc(db, EVALUATIONS_COLLECTION, oid)))
+        )
+      : [];
+
+  const allShards = [
+    primaryData,
+    ...overflowSnaps.filter((s) => s.exists()).map((s) => s.data()!),
+  ];
+
+  const byId = new Map<string, FixtureEvaluation>();
+  for (const shard of allShards) {
+    const items = extractEvaluationsFromIndexShardData(shard);
+    for (const item of items) {
+      byId.set(item.id, pickNewerEvaluation(byId.get(item.id), item));
+    }
+  }
+
+  const isUpToDateV3 =
+    primaryData.schemaVersion === CAMPUS_LIGHT_INDEX_SCHEMA_VERSION &&
+    Boolean(primaryData.buildingPacks) &&
+    !('evaluationsMap' in primaryData);
+
+  return {
+    exists: true,
+    isUpToDateV3,
+    evaluations: Array.from(byId.values()),
+    overflowDocIds,
+  };
+}
+
+/**
+ * Writes the entire campus lightweight index using Schema V3 (`buildingPacks` JSON strings)
+ * AND automatic multi-document sharding (`GLOBAL_CAMPUS_LIGHT_INDEX`, `GLOBAL_CAMPUS_LIGHT_INDEX_PART_2`...).
+ *
+ * Crucial Design Properties:
+ * 1. Each building pack (`B01`..`B34`, chunked at 100 items max per pack key) is stored as a serialized
+ *    JSON string, so Firestore generates ONLY 2 index entries per pack (~70–90 index entries total
+ *    for the whole campus instead of 40,000+ index entries!).
+ * 2. Writes WITHOUT `{ merge: true }` so any legacy `evaluationsMap` field in production Firestore
+ *    (which triggered `FirebaseError: too many index entries for entity /evaluations/GLOBAL_CAMPUS_LIGHT_INDEX`)
+ *    is 100% wiped out and replaced on the very first write.
+ * 3. Checks both `SAFE_FIRESTORE_DOC_BYTES` (800 KB) and `SAFE_FIRESTORE_INDEX_ENTRIES` (10,000) before
+ *    spilling excess packs into `GLOBAL_CAMPUS_LIGHT_INDEX_PART_2`, etc.
+ */
+async function writeCampusLightIndexSharded(
+  evaluations: FixtureEvaluation[],
+  secretCode: string,
+  nowIso: string = new Date().toISOString()
+): Promise<void> {
+  if (!secretCode) return;
+
+  // Group valid, non-deleted evaluations by buildingId
+  const byBuilding = new Map<string, FixtureEvaluation[]>();
+  const dedupedById = new Map<string, FixtureEvaluation>();
+
+  for (const rawItem of evaluations) {
+    if (
+      !rawItem ||
+      !rawItem.id ||
+      !rawItem.buildingId ||
+      rawItem.isDeleted ||
+      rawItem.id.startsWith(MEDIA_DOC_PREFIX) ||
+      rawItem.id.startsWith(CAMPUS_LIGHT_INDEX_DOC_ID) ||
+      rawItem.id === CAMPUS_MAP_CONFIG_DOC_ID ||
+      rawItem.buildingId === 'MEDIA_VAULT' ||
+      rawItem.buildingId === 'CAMPUS_GLOBAL'
+    ) {
+      continue;
+    }
+    const compact = toCompactIndexEntry(rawItem);
+    dedupedById.set(compact.id, pickNewerEvaluation(dedupedById.get(compact.id), compact));
+  }
+
+  for (const item of dedupedById.values()) {
+    const bId = item.buildingId.toUpperCase();
+    const list = byBuilding.get(bId) || [];
+    list.push(item);
+    byBuilding.set(bId, list);
+  }
+
+  // Create atomic JSON string packs (max 100 evaluations per pack key so each string is < 75 KB)
+  const packEntries: Array<{ key: string; json: string; bytes: number }> = [];
+  const sortedBuildings = Array.from(byBuilding.keys()).sort();
+
+  for (const bId of sortedBuildings) {
+    const list = byBuilding.get(bId) || [];
+    const CHUNK_SIZE = 100;
+    if (list.length <= CHUNK_SIZE) {
+      const mapObj: Record<string, FixtureEvaluation> = {};
+      for (const ev of list) mapObj[ev.id] = ev;
+      const json = JSON.stringify(stripUndefinedValues(mapObj));
+      packEntries.push({
+        key: bId,
+        json,
+        bytes: estimateFirestoreDocSizeBytes(json),
+      });
+    } else {
+      for (let c = 0; c < list.length; c += CHUNK_SIZE) {
+        const slice = list.slice(c, c + CHUNK_SIZE);
+        const mapObj: Record<string, FixtureEvaluation> = {};
+        for (const ev of slice) mapObj[ev.id] = ev;
+        const json = JSON.stringify(stripUndefinedValues(mapObj));
+        const chunkKey = `${bId}__${Math.floor(c / CHUNK_SIZE) + 1}`;
+        packEntries.push({
+          key: chunkKey,
+          json,
+          bytes: estimateFirestoreDocSizeBytes(json),
+        });
+      }
+    }
+  }
+
+  const createEmptyIndexShard = (partIndex: number): Record<string, any> => ({
+    id:
+      partIndex === 1
+        ? CAMPUS_LIGHT_INDEX_DOC_ID
+        : `${CAMPUS_LIGHT_INDEX_DOC_ID}_PART_${partIndex}`,
+    buildingId: 'CAMPUS_GLOBAL',
+    schemaVersion: CAMPUS_LIGHT_INDEX_SCHEMA_VERSION,
+    partIndex,
+    totalEvaluationsCount: dedupedById.size,
+    buildingPacks: {} as Record<string, string>,
+    secretCode,
+    updatedAt: nowIso,
+  });
+
+  const shards: Array<Record<string, any>> = [createEmptyIndexShard(1)];
+  let currentBytes = estimateFirestoreDocSizeBytes(shards[0]);
+  let currentIndexEntries = estimateFirestoreIndexEntries(shards[0]);
+
+  for (const pack of packEntries) {
+    // Each string field in buildingPacks adds only 2 index entries!
+    const nextBytes = currentBytes + pack.bytes + 64;
+    const nextIndexEntries = currentIndexEntries + 2;
+
+    if (
+      (nextBytes > SAFE_FIRESTORE_DOC_BYTES ||
+        nextIndexEntries > SAFE_FIRESTORE_INDEX_ENTRIES) &&
+      Object.keys(shards[shards.length - 1].buildingPacks).length > 0
+    ) {
+      const nextShard = createEmptyIndexShard(shards.length + 1);
+      nextShard.buildingPacks[pack.key] = pack.json;
+      shards.push(nextShard);
+      currentBytes = estimateFirestoreDocSizeBytes(nextShard);
+      currentIndexEntries = estimateFirestoreIndexEntries(nextShard);
+    } else {
+      shards[shards.length - 1].buildingPacks[pack.key] = pack.json;
+      currentBytes = nextBytes;
+      currentIndexEntries = nextIndexEntries;
+    }
+  }
+
+  const totalParts = shards.length;
+  const overflowDocIds = shards.slice(1).map((s) => s.id as string);
+  for (const s of shards) {
+    s.totalParts = totalParts;
+  }
+  if (overflowDocIds.length > 0) {
+    shards[0].overflowDocIds = overflowDocIds;
+  }
+
+  // Write WITHOUT { merge: true } so any legacy `evaluationsMap` field is completely overwritten and deleted!
+  await Promise.all(
+    shards.map((shard) =>
+      setDoc(doc(db, EVALUATIONS_COLLECTION, shard.id), stripUndefinedValues(shard))
+    )
+  );
+
+  // Clean up any old overflow shards beyond totalParts (e.g. PART_2..PART_5 if no longer needed)
+  for (let stalePart = totalParts + 1; stalePart <= totalParts + 3; stalePart++) {
+    try {
+      await deleteDoc(
+        doc(db, EVALUATIONS_COLLECTION, `${CAMPUS_LIGHT_INDEX_DOC_ID}_PART_${stalePart}`)
+      );
+    } catch {}
+  }
+}
+
+/**
+ * Updates the global lightweight index after saving a single evaluation (e.g. Maximo number or inspection).
+ * Automatically hydrates from any existing cloud index first if local cache hasn't been hydrated yet,
+ * and writes a clean Schema V3 document without `evaluationsMap` so Firestore never throws
+ * `too many index entries for entity /evaluations/GLOBAL_CAMPUS_LIGHT_INDEX`.
+ */
+async function syncEvaluationToCampusLightIndex(
+  latestEvaluation: FixtureEvaluation,
+  secretCode: string,
+  nowIso: string
+): Promise<void> {
+  if (!secretCode) return;
+
+  if (!hasHydratedCampusCache) {
+    try {
+      const existingIndex = await readCampusLightIndexSharded();
+      if (existingIndex.evaluations.length > 0) {
+        saveBatchToLocalCache(existingIndex.evaluations);
+      }
+      hasHydratedCampusCache = true;
+    } catch {}
+  }
+
+  // Ensure the latest evaluation is merged as the newest version in local cache
+  saveToLocalCache(latestEvaluation);
+  const allKnown = Object.values(getLocalCache()).filter((e) => e && !e.isDeleted);
+  await writeCampusLightIndexSharded(allKnown, secretCode, nowIso);
 }
 
 /**
@@ -876,21 +1297,26 @@ async function saveFacilityMediaVaultSharded(
 
   const shardPayloads: Array<Record<string, any>> = [createEmptyShard(1)];
   let currentShardBytes = estimateFirestoreDocSizeBytes(shardPayloads[0]);
+  let currentShardIndexEntries = estimateFirestoreIndexEntries(shardPayloads[0]);
 
   for (const slot of slots) {
+    const slotIndexEntries = 24;
     if (
-      currentShardBytes + slot.bytes > SAFE_FIRESTORE_DOC_BYTES &&
+      (currentShardBytes + slot.bytes > SAFE_FIRESTORE_DOC_BYTES ||
+        currentShardIndexEntries + slotIndexEntries > SAFE_FIRESTORE_INDEX_ENTRIES) &&
       currentShardBytes > 4096
     ) {
-      // Current document would exceed safe 1 MiB capacity -> open a new linked document for the same facility!
+      // Current document would exceed safe 1 MiB or index capacity -> open a new linked document for the same facility!
       const nextPartIndex = shardPayloads.length + 1;
       const nextShard = createEmptyShard(nextPartIndex);
       slot.applyToShard(nextShard);
       shardPayloads.push(nextShard);
       currentShardBytes = estimateFirestoreDocSizeBytes(nextShard);
+      currentShardIndexEntries = estimateFirestoreIndexEntries(nextShard);
     } else {
       slot.applyToShard(shardPayloads[shardPayloads.length - 1]);
       currentShardBytes += slot.bytes;
+      currentShardIndexEntries += slotIndexEntries;
     }
   }
 
@@ -1060,7 +1486,7 @@ async function migrateSingleLegacyDocInBackground(
     const evalRef = doc(db, EVALUATIONS_COLLECTION, rawDoc.id);
     await setDoc(
       evalRef,
-      stripUndefinedValues({
+      guardEvaluationDocumentPayload({
         ...stripped,
         secretCode,
       })
@@ -1080,32 +1506,11 @@ async function buildLightIndexAndMigrateLegacyDocs(
   isBackgroundMigrationRunning = true;
 
   try {
-    // 1. Write the global lightweight campus index so all devices load in 1 fast read (< 300ms)
-    const evaluationsMap: Record<string, FixtureEvaluation> = {};
-    for (const item of strippedEvaluations) {
-      if (
-        item &&
-        item.id &&
-        !item.isDeleted &&
-        !item.id.startsWith(MEDIA_DOC_PREFIX) &&
-        item.id !== CAMPUS_LIGHT_INDEX_DOC_ID &&
-        item.buildingId !== 'MEDIA_VAULT' &&
-        item.buildingId !== 'CAMPUS_GLOBAL'
-      ) {
-        evaluationsMap[item.id] = toCompactIndexEntry(item);
-      }
-    }
-
-    const indexRef = doc(db, EVALUATIONS_COLLECTION, CAMPUS_LIGHT_INDEX_DOC_ID);
-    await setDoc(
-      indexRef,
-      stripUndefinedValues({
-        id: CAMPUS_LIGHT_INDEX_DOC_ID,
-        buildingId: 'CAMPUS_GLOBAL',
-        secretCode,
-        updatedAt: new Date().toISOString(),
-        evaluationsMap,
-      })
+    // 1. Write the global lightweight campus index in Schema V3 (packed building JSON strings, ~80 index entries total)
+    await writeCampusLightIndexSharded(
+      strippedEvaluations,
+      secretCode,
+      new Date().toISOString()
     );
 
     // 2. Migrate any legacy documents that still had embedded Base64
@@ -1406,28 +1811,15 @@ export async function saveEvaluation(
           } catch {}
         }
 
-        // 2. Verify main lightweight evaluation document is well below 1 MiB and write it
+        // 2. Verify main lightweight evaluation document is well below 1 MiB & 40,000 index entries and write it
         updateProgress(70, 'جاري تحديث سجل المرفق الخفيف...');
         const docRef = doc(db, EVALUATIONS_COLLECTION, strippedEvaluation.id);
-        await setDoc(docRef, stripUndefinedValues(cleanPayload));
+        await setDoc(docRef, guardEvaluationDocumentPayload(cleanPayload));
 
-        // 3. Update global lightweight index document for instant campus-wide loading
+        // 3. Update global lightweight index document (Schema V3 packed strings, zero index-entry explosion)
         updateProgress(85, 'جاري تحديث الفهرس السريع للبلاغات...');
         try {
-          const indexRef = doc(db, EVALUATIONS_COLLECTION, CAMPUS_LIGHT_INDEX_DOC_ID);
-          await setDoc(
-            indexRef,
-            stripUndefinedValues({
-              id: CAMPUS_LIGHT_INDEX_DOC_ID,
-              buildingId: 'CAMPUS_GLOBAL',
-              secretCode,
-              updatedAt: nowIso,
-              evaluationsMap: {
-                [strippedEvaluation.id]: toCompactIndexEntry(strippedEvaluation),
-              },
-            }),
-            { merge: true }
-          );
+          await syncEvaluationToCampusLightIndex(strippedEvaluation, secretCode, nowIso);
         } catch (indexErr) {
           console.warn('[HostelsEval] Lightweight index update warning:', indexErr);
         }
@@ -1868,7 +2260,7 @@ export function subscribeToBuildingEvaluations(
         snapshot.forEach((docSnap) => {
           if (
             docSnap.id.startsWith(MEDIA_DOC_PREFIX) ||
-            docSnap.id === CAMPUS_LIGHT_INDEX_DOC_ID ||
+            docSnap.id.startsWith(CAMPUS_LIGHT_INDEX_DOC_ID) ||
             docSnap.id === CAMPUS_MAP_CONFIG_DOC_ID
           ) {
             return;
@@ -1902,7 +2294,7 @@ export function subscribeToBuildingEvaluations(
           }
         }
 
-        // Merge remote with fresh local cache
+        // Merge remote with fresh local cache using monotonic timestamp resolution
         const freshLocalCache = Object.values(getLocalCache()).filter(
           (item) => item?.buildingId && item.buildingId.toUpperCase() === targetId && !item.isDeleted
         );
@@ -1912,7 +2304,7 @@ export function subscribeToBuildingEvaluations(
         });
         remoteList.forEach((item) => {
           if (item && item.id && !item.isDeleted) {
-            mergedMap.set(item.id, item);
+            mergedMap.set(item.id, pickNewerEvaluation(mergedMap.get(item.id), item));
           }
         });
 
@@ -1945,41 +2337,26 @@ export async function fetchAllEvaluations(): Promise<FixtureEvaluation[]> {
       try {
         updateProgress(20, 'جاري قراءة الفهرس الخفيف السريع للبلاغات...');
 
-        // Fast Path: 1 single document read (~30-80 KB, ZERO Base64 attachments!)
+        // Fast Path: Read Schema V3 sharded packed index (~30-80 KB, ~80 index entries, ZERO Base64 attachments!)
+        let legacyBaselineEvaluations: FixtureEvaluation[] = [];
         try {
-          const indexRef = doc(db, EVALUATIONS_COLLECTION, CAMPUS_LIGHT_INDEX_DOC_ID);
-          const indexSnap = await getDoc(indexRef);
-          if (indexSnap.exists()) {
-            const indexData = indexSnap.data();
-            const evaluationsMap = indexData?.evaluationsMap;
-            if (
-              evaluationsMap &&
-              typeof evaluationsMap === 'object' &&
-              Object.keys(evaluationsMap).length > 0
-            ) {
-              updateProgress(75, 'تم جلب الفهرس السريع، جاري تحديث الواجهة...');
+          const indexRes = await readCampusLightIndexSharded();
+          if (indexRes.exists && indexRes.evaluations.length > 0) {
+            if (indexRes.isUpToDateV3) {
+              updateProgress(75, 'تم جلب الفهرس السريع (V3)، جاري تحديث الواجهة...');
               const remoteList: FixtureEvaluation[] = [];
               const deletedIds: string[] = [];
 
-              for (const rawItem of Object.values(evaluationsMap)) {
-                const item = stripHeavyMediaFromEvaluation(rawItem);
-                if (
-                  item &&
-                  item.id &&
-                  item.buildingId &&
-                  !item.id.startsWith(MEDIA_DOC_PREFIX) &&
-                  item.buildingId !== 'MEDIA_VAULT' &&
-                  item.buildingId !== 'CAMPUS_GLOBAL'
-                ) {
-                  if (item.isDeleted) {
-                    deletedIds.push(item.id);
-                  } else {
-                    remoteList.push(item);
-                  }
+              for (const item of indexRes.evaluations) {
+                if (item.isDeleted) {
+                  deletedIds.push(item.id);
+                } else {
+                  remoteList.push(item);
                 }
               }
 
               saveBatchToLocalCache(remoteList, deletedIds);
+              hasHydratedCampusCache = true;
 
               const localMap = getLocalCache();
               const mergedMap = new Map<string, FixtureEvaluation>();
@@ -1987,21 +2364,46 @@ export async function fetchAllEvaluations(): Promise<FixtureEvaluation[]> {
                 if (item && item.id && !item.isDeleted) mergedMap.set(item.id, item);
               });
               remoteList.forEach((item) => {
-                if (item && item.id && !item.isDeleted) mergedMap.set(item.id, item);
+                if (item && item.id && !item.isDeleted) {
+                  mergedMap.set(item.id, pickNewerEvaluation(mergedMap.get(item.id), item));
+                }
               });
 
               updateProgress(96, 'اكتملت مزامنة بيانات البلاغات بنجاح');
               return Array.from(mergedMap.values());
+            } else {
+              // Legacy V1 index detected (which froze at 40,000 index entries).
+              // Keep its records as baseline and query live individual docs below to recover all recent Maximo updates,
+              // then auto-heal GLOBAL_CAMPUS_LIGHT_INDEX to Schema V3!
+              legacyBaselineEvaluations = indexRes.evaluations;
             }
           }
         } catch (fastPathErr) {
           console.warn('[HostelsEval] Fast light index read fallback:', fastPathErr);
         }
 
-        // Fallback Path (first run before light index is built): read collection & immediately strip heavy Base64
-        updateProgress(40, 'جاري تجهيز الفهرس الخفيف وتجريد المرفقات الثقيلة...');
-        const querySnapshot = await getDocs(collection(db, EVALUATIONS_COLLECTION));
-        const remoteList: FixtureEvaluation[] = [];
+        // Authoritative Recovery Path (first run or healing from legacy V1 index):
+        // Uses server-side buildingId range filter ('B00'..'B99') so Firestore NEVER transmits MEDIA_VAULT docs!
+        updateProgress(40, 'جاري مزامنة السجلات وبناء الفهرس المضغوط المانع لتجاوز حدود الفهارس...');
+        let querySnapshot;
+        try {
+          const evalsOnlyQuery = query(
+            collection(db, EVALUATIONS_COLLECTION),
+            where('buildingId', '>=', 'B00'),
+            where('buildingId', '<=', 'B99')
+          );
+          querySnapshot = await getDocs(evalsOnlyQuery);
+        } catch {
+          querySnapshot = await getDocs(collection(db, EVALUATIONS_COLLECTION));
+        }
+
+        const remoteById = new Map<string, FixtureEvaluation>();
+        for (const baseItem of legacyBaselineEvaluations) {
+          if (baseItem && baseItem.id && !baseItem.isDeleted) {
+            remoteById.set(baseItem.id, baseItem);
+          }
+        }
+
         const deletedIds: string[] = [];
         const legacyToMigrate: Array<{ raw: any; extracted: FacilityMediaVaultDoc }> = [];
 
@@ -2009,7 +2411,7 @@ export async function fetchAllEvaluations(): Promise<FixtureEvaluation[]> {
           if (
             docSnap.id.startsWith(MEDIA_DOC_PREFIX) ||
             docSnap.id === CAMPUS_MAP_CONFIG_DOC_ID ||
-            docSnap.id === CAMPUS_LIGHT_INDEX_DOC_ID ||
+            docSnap.id.startsWith(CAMPUS_LIGHT_INDEX_DOC_ID) ||
             docSnap.id === '_connection_test_probe'
           ) {
             return;
@@ -2033,14 +2435,18 @@ export async function fetchAllEvaluations(): Promise<FixtureEvaluation[]> {
           const stripped = stripHeavyMediaFromEvaluation(raw);
           if (stripped.isDeleted) {
             deletedIds.push(stripped.id);
+            remoteById.delete(stripped.id);
           } else {
-            remoteList.push(stripped);
+            remoteById.set(stripped.id, pickNewerEvaluation(remoteById.get(stripped.id), stripped));
           }
         });
+
+        const remoteList = Array.from(remoteById.values());
 
         updateProgress(85, 'جاري حفظ الفهرس الخفيف في ذاكرة الجهاز...');
         // Single batch write to localStorage instead of N writes inside forEach!
         saveBatchToLocalCache(remoteList, deletedIds);
+        hasHydratedCampusCache = true;
 
         const localMap = getLocalCache();
         const mergedMap = new Map<string, FixtureEvaluation>();
@@ -2048,12 +2454,14 @@ export async function fetchAllEvaluations(): Promise<FixtureEvaluation[]> {
           if (item && item.id && !item.isDeleted) mergedMap.set(item.id, item);
         });
         remoteList.forEach((item) => {
-          if (item && item.id && !item.isDeleted) mergedMap.set(item.id, item);
+          if (item && item.id && !item.isDeleted) {
+            mergedMap.set(item.id, pickNewerEvaluation(mergedMap.get(item.id), item));
+          }
         });
 
         const mergedResult = Array.from(mergedMap.values());
 
-        // Automatically build GLOBAL_CAMPUS_LIGHT_INDEX & migrate legacy embedded Base64 in background if authenticated
+        // Automatically heal GLOBAL_CAMPUS_LIGHT_INDEX to Schema V3 & migrate legacy embedded Base64 in background if authenticated
         const secretCode = getDecodedSecurityCode() || getAdminRawSecurityCode();
         if (secretCode && mergedResult.length > 0) {
           buildLightIndexAndMigrateLegacyDocs(mergedResult, legacyToMigrate, secretCode).catch(
@@ -2092,7 +2500,7 @@ export async function syncAllEvaluationsToFirestore(
       let synced = 0;
       let failed = 0;
       let firstError: string | undefined;
-      const evaluationsMap: Record<string, FixtureEvaluation> = {};
+      const syncedEvaluations: FixtureEvaluation[] = [];
 
       for (let i = 0; i < itemsToSync.length; i++) {
         const item = itemsToSync[i];
@@ -2100,7 +2508,7 @@ export async function syncAllEvaluationsToFirestore(
           !item ||
           !item.id ||
           item.id.startsWith(MEDIA_DOC_PREFIX) ||
-          item.id === CAMPUS_LIGHT_INDEX_DOC_ID ||
+          item.id.startsWith(CAMPUS_LIGHT_INDEX_DOC_ID) ||
           item.buildingId === 'MEDIA_VAULT' ||
           item.buildingId === 'CAMPUS_GLOBAL'
         ) {
@@ -2137,9 +2545,9 @@ export async function syncAllEvaluationsToFirestore(
           if (secretCode) {
             rawPayload.secretCode = secretCode;
           }
-          const cleanPayload = stripUndefinedValues(rawPayload);
+          const cleanPayload = guardEvaluationDocumentPayload(rawPayload);
           await setDoc(docRef, cleanPayload);
-          evaluationsMap[stripped.id] = toCompactIndexEntry(stripped);
+          syncedEvaluations.push(stripped);
           synced++;
         } catch (err: any) {
           failed++;
@@ -2149,22 +2557,17 @@ export async function syncAllEvaluationsToFirestore(
         }
       }
 
-      if (secretCode && Object.keys(evaluationsMap).length > 0) {
+      if (secretCode && syncedEvaluations.length > 0) {
         try {
-          updateProgress(94, 'جاري تحديث الفهرس السريع للمجمع...');
-          const indexRef = doc(db, EVALUATIONS_COLLECTION, CAMPUS_LIGHT_INDEX_DOC_ID);
-          await setDoc(
-            indexRef,
-            stripUndefinedValues({
-              id: CAMPUS_LIGHT_INDEX_DOC_ID,
-              buildingId: 'CAMPUS_GLOBAL',
-              secretCode,
-              updatedAt: new Date().toISOString(),
-              evaluationsMap,
-            }),
-            { merge: true }
+          updateProgress(94, 'جاري تحديث الفهرس السريع للمجمع (Schema V3)...');
+          await writeCampusLightIndexSharded(
+            syncedEvaluations,
+            secretCode,
+            new Date().toISOString()
           );
-        } catch {}
+        } catch (err: any) {
+          console.warn('[HostelsEval] Index sync warning:', err);
+        }
       }
 
       return {
@@ -2263,9 +2666,14 @@ export async function testFirebaseCloudConnection(): Promise<CloudConnectionTest
 
   const secretCode = getDecodedSecurityCode() || getAdminRawSecurityCode();
 
-  // 1. Test Read (Public Read)
+  // 1. Test Read (Public Read — filtered to building records so MEDIA_VAULT blobs are never downloaded)
   try {
-    const querySnapshot = await getDocs(collection(db, EVALUATIONS_COLLECTION));
+    const evalsOnlyQuery = query(
+      collection(db, EVALUATIONS_COLLECTION),
+      where('buildingId', '>=', 'B00'),
+      where('buildingId', '<=', 'B99')
+    );
+    const querySnapshot = await getDocs(evalsOnlyQuery);
     canRead = true;
     remoteDocsCount = querySnapshot.size;
   } catch (err: any) {
@@ -2575,24 +2983,12 @@ export async function resetBuildingEvaluations(
       })
     );
 
-    // Update GLOBAL_CAMPUS_LIGHT_INDEX with remaining items
+    // Update GLOBAL_CAMPUS_LIGHT_INDEX with remaining items in Schema V3
     try {
-      const evaluationsMap: Record<string, FixtureEvaluation> = {};
-      for (const item of Object.values(remaining)) {
-        if (item && item.id && !item.isDeleted) {
-          evaluationsMap[item.id] = toCompactIndexEntry(item);
-        }
-      }
-      const indexRef = doc(db, EVALUATIONS_COLLECTION, CAMPUS_LIGHT_INDEX_DOC_ID);
-      await setDoc(
-        indexRef,
-        stripUndefinedValues({
-          id: CAMPUS_LIGHT_INDEX_DOC_ID,
-          buildingId: 'CAMPUS_GLOBAL',
-          secretCode,
-          updatedAt: new Date().toISOString(),
-          evaluationsMap,
-        })
+      await writeCampusLightIndexSharded(
+        Object.values(remaining),
+        secretCode,
+        new Date().toISOString()
       );
     } catch {}
   }
@@ -2681,9 +3077,16 @@ export const CAMPUS_MAP_CONFIG_DOC_ID = 'GLOBAL_CAMPUS_MAP_CONFIG';
 export async function saveCampusMapToCloud(config: CampusMapConfig): Promise<CloudSaveResult> {
   const secretCode = getDecodedSecurityCode() || getAdminRawSecurityCode();
   const rawPayload: Record<string, any> = {
-    ...config,
     id: CAMPUS_MAP_CONFIG_DOC_ID,
     buildingId: 'CAMPUS_GLOBAL',
+    groundImageUrl: config.groundImageUrl,
+    groundScale: config.groundScale,
+    groundOffsetX: config.groundOffsetX,
+    groundOffsetZ: config.groundOffsetZ,
+    groundRotation: config.groundRotation,
+    groundOpacity: config.groundOpacity,
+    // Store buildingPositions as a serialized JSON string (2 index entries instead of ~272 map index entries)
+    buildingPositionsJson: JSON.stringify(config.buildingPositions || {}),
     secretCode,
     updatedAt: new Date().toISOString(),
   };
@@ -2692,12 +3095,13 @@ export async function saveCampusMapToCloud(config: CampusMapConfig): Promise<Clo
 
   try {
     const docRef = doc(db, EVALUATIONS_COLLECTION, CAMPUS_MAP_CONFIG_DOC_ID);
-    await setDoc(docRef, cleanPayload, { merge: true });
+    // Write without { merge: true } so legacy unindexed/bloated fields are cleanly replaced
+    await setDoc(docRef, cleanPayload);
 
     // Also attempt saving to 'settings' collection if accessible
     try {
       const settingsRef = doc(db, 'settings', 'campus_map');
-      await setDoc(settingsRef, cleanPayload, { merge: true });
+      await setDoc(settingsRef, cleanPayload);
     } catch {}
 
     if (typeof window !== 'undefined') {
@@ -2726,22 +3130,36 @@ export async function saveCampusMapToCloud(config: CampusMapConfig): Promise<Clo
  * Fetch Campus Map Configuration from Firebase Firestore (Public Read)
  */
 export async function fetchCampusMapFromCloud(): Promise<CampusMapConfig | null> {
+  const parseMapConfigData = (data: Record<string, any> | undefined): CampusMapConfig | null => {
+    if (!data) return null;
+    let buildingPositions = data.buildingPositions;
+    if (typeof data.buildingPositionsJson === 'string') {
+      try {
+        buildingPositions = JSON.parse(data.buildingPositionsJson);
+      } catch {}
+    }
+    if (buildingPositions && typeof buildingPositions === 'object') {
+      return {
+        groundImageUrl: data.groundImageUrl || undefined,
+        groundScale: typeof data.groundScale === 'number' ? data.groundScale : 100,
+        groundOffsetX: typeof data.groundOffsetX === 'number' ? data.groundOffsetX : 0,
+        groundOffsetZ: typeof data.groundOffsetZ === 'number' ? data.groundOffsetZ : 0,
+        groundRotation: typeof data.groundRotation === 'number' ? data.groundRotation : 0,
+        groundOpacity: typeof data.groundOpacity === 'number' ? data.groundOpacity : 92,
+        buildingPositions: buildingPositions || {},
+        updatedAt: data.updatedAt,
+      };
+    }
+    return null;
+  };
+
   try {
     const docRef = doc(db, EVALUATIONS_COLLECTION, CAMPUS_MAP_CONFIG_DOC_ID);
     const docSnap = await getDoc(docRef);
 
     if (docSnap.exists()) {
-      const data = docSnap.data();
-      if (data && data.buildingPositions) {
-        return {
-          groundImageUrl: data.groundImageUrl || undefined,
-          groundScale: typeof data.groundScale === 'number' ? data.groundScale : 100,
-          groundOffsetX: typeof data.groundOffsetX === 'number' ? data.groundOffsetX : 0,
-          groundOffsetZ: typeof data.groundOffsetZ === 'number' ? data.groundOffsetZ : 0,
-          buildingPositions: data.buildingPositions || {},
-          updatedAt: data.updatedAt,
-        };
-      }
+      const parsed = parseMapConfigData(docSnap.data());
+      if (parsed) return parsed;
     }
 
     // Try fallback from 'settings/campus_map'
@@ -2749,17 +3167,8 @@ export async function fetchCampusMapFromCloud(): Promise<CampusMapConfig | null>
       const settingsRef = doc(db, 'settings', 'campus_map');
       const settingsSnap = await getDoc(settingsRef);
       if (settingsSnap.exists()) {
-        const data = settingsSnap.data();
-        if (data && data.buildingPositions) {
-          return {
-            groundImageUrl: data.groundImageUrl || undefined,
-            groundScale: typeof data.groundScale === 'number' ? data.groundScale : 100,
-            groundOffsetX: typeof data.groundOffsetX === 'number' ? data.groundOffsetX : 0,
-            groundOffsetZ: typeof data.groundOffsetZ === 'number' ? data.groundOffsetZ : 0,
-            buildingPositions: data.buildingPositions || {},
-            updatedAt: data.updatedAt,
-          };
-        }
+        const parsed = parseMapConfigData(settingsSnap.data());
+        if (parsed) return parsed;
       }
     } catch {}
 
