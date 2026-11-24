@@ -5,7 +5,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { EvaluationHistoryEntry } from '../../types/hostel';
-import { getBuildingTimeline, resolveTimelineIssue } from '../../services/firestoreService';
+import {
+  getBuildingTimeline,
+  resolveTimelineIssue,
+  fetchFacilityMediaOnDemand,
+} from '../../services/firestoreService';
 import {
   Clock,
   CheckCircle2,
@@ -22,6 +26,7 @@ import {
   ChevronDown,
   Maximize2,
   Droplets,
+  Eye,
   X,
 } from 'lucide-react';
 import { ImageViewerModal } from '../Common/ImageViewerModal';
@@ -43,6 +48,29 @@ export const TimelineViewer: React.FC<TimelineViewerProps> = ({
   const [filter, setFilter] = useState<'all' | 'unresolved' | 'resolved'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+  const [loadingEntryId, setLoadingEntryId] = useState<string | null>(null);
+
+  const handleOpenTimelinePhoto = async (entry: EvaluationHistoryEntry) => {
+    if (entry.photoBase64) {
+      setSelectedPhoto(entry.photoBase64);
+      return;
+    }
+    setLoadingEntryId(entry.id);
+    try {
+      const vault = await fetchFacilityMediaOnDemand(entry.fixtureId);
+      const historyImg = vault?.historyMediaById?.[entry.id]?.find((m) => m.type === 'image')?.url;
+      const fallbackImg =
+        historyImg ||
+        vault?.photoBase64 ||
+        vault?.media?.find((m) => m.type === 'image')?.url ||
+        vault?.closurePhotoBase64;
+      if (fallbackImg) {
+        setSelectedPhoto(fallbackImg);
+      }
+    } finally {
+      setLoadingEntryId(null);
+    }
+  };
 
   // Resolution modal state
   const [resolvingEntryId, setResolvingEntryId] = useState<string | null>(null);
@@ -305,22 +333,21 @@ export const TimelineViewer: React.FC<TimelineViewerProps> = ({
                       )}
                     </div>
 
-                    {/* Photo thumbnail */}
-                    {entry.photoBase64 && (
+                    {/* On-Demand Photo Button (Zero Base64 pre-loaded in Timeline List) */}
+                    {(entry.hasPhoto || entry.photoBase64) && (
                       <div className="shrink-0">
                         <button
                           type="button"
-                          onClick={() => setSelectedPhoto(entry.photoBase64 || null)}
-                          className="relative group/img overflow-hidden rounded-xl border border-slate-200 w-20 h-20 shadow-xs cursor-pointer block"
+                          disabled={loadingEntryId === entry.id}
+                          onClick={() => handleOpenTimelinePhoto(entry)}
+                          className="px-3 py-2 rounded-xl border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-800 text-xs font-bold inline-flex items-center gap-1.5 shadow-2xs cursor-pointer transition"
                         >
-                          <img
-                            src={entry.photoBase64}
-                            alt="توثيق العطل"
-                            className="w-full h-full object-cover group-hover/img:scale-105 transition"
-                          />
-                          <div className="absolute bottom-1 right-1 bg-black/60 backdrop-blur-xs text-white p-1 rounded-md pointer-events-none transition group-hover/img:bg-blue-600">
-                            <Maximize2 className="w-3 h-3" />
-                          </div>
+                          <Eye className="w-3.5 h-3.5 text-blue-600" />
+                          <span>
+                            {loadingEntryId === entry.id
+                              ? 'جاري التحميل...'
+                              : 'عرض الصورة (عند الطلب)'}
+                          </span>
                         </button>
                       </div>
                     )}

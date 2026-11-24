@@ -10,6 +10,7 @@ import {
   FixtureEvaluation,
   ServiceDepartment,
   FacilityHistoryEvent,
+  FacilityMediaVaultDoc,
 } from '../../types/hostel';
 import {
   DEFECT_TAGS,
@@ -24,6 +25,7 @@ import {
   updateMaximoTicketInfo,
   closeMaintenanceTicket,
   appendFacilityChatMessage,
+  fetchFacilityMediaOnDemand,
 } from '../../services/firestoreService';
 import { processFacilityMediaFile, compressAndWatermarkImage } from '../../utils/imageCompressor';
 import { ImageViewerModal } from '../Common/ImageViewerModal';
@@ -48,6 +50,9 @@ import {
   Send,
   Sparkles,
   ExternalLink,
+  Eye,
+  Download,
+  ChevronDown,
   X,
 } from 'lucide-react';
 
@@ -106,10 +111,96 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
   const [chatPhotoBase64, setChatPhotoBase64] = useState<string | undefined>(undefined);
   const [isSendingChat, setIsSendingChat] = useState<boolean>(false);
 
+  // On-Demand Media Loading & Ticket Pagination (Prevents OOM on Old Devices)
+  const [visibleCount, setVisibleCount] = useState<number>(20);
+  const [loadedMediaByFixtureId, setLoadedMediaByFixtureId] = useState<
+    Record<string, FacilityMediaVaultDoc>
+  >({});
+  const [loadingMediaKey, setLoadingMediaKey] = useState<string | null>(null);
+
   React.useEffect(() => {
     setActiveTrack(portalRole);
     setSelectedDepartment('ALL');
+    setVisibleCount(20);
   }, [portalRole]);
+
+  React.useEffect(() => {
+    setVisibleCount(20);
+  }, [selectedDepartment, selectedBuildingId, statusFilter, searchQuery]);
+
+  const handleLoadOnDemandAttachment = async (
+    item: FixtureEvaluation,
+    target: 'before' | 'after' | 'rejection' | 'maximo' | 'chat',
+    historyEventId?: string
+  ) => {
+    const key = `${item.id}_${target}_${historyEventId || ''}`;
+    setLoadingMediaKey(key);
+    try {
+      let vault: FacilityMediaVaultDoc | null = loadedMediaByFixtureId[item.id] || null;
+      if (!vault) {
+        vault = await fetchFacilityMediaOnDemand(item.id);
+        if (vault) {
+          setLoadedMediaByFixtureId((prev) => ({
+            ...prev,
+            [item.id]: vault!,
+          }));
+        }
+      }
+
+      if (!vault) {
+        alert('لم يتم العثور على مرفق محفوظ لهذا السجل في السحابة.');
+        return;
+      }
+
+      if (target === 'before') {
+        const imgUrl =
+          vault.photoBase64 ||
+          vault.media?.find((m) => m.type === 'image')?.url ||
+          item.photoBase64;
+        if (imgUrl) {
+          setPreviewImage(imgUrl);
+        } else if (vault.media && vault.media[0]?.url) {
+          const first = vault.media[0];
+          const a = document.createElement('a');
+          a.href = first.url;
+          a.download = first.name || `${item.id}_attachment`;
+          a.click();
+        }
+      } else if (target === 'after') {
+        const afterUrl = vault.closurePhotoBase64 || item.maintenanceTicket?.closurePhotoBase64;
+        if (afterUrl) setPreviewImage(afterUrl);
+      } else if (target === 'rejection') {
+        const rejUrl =
+          vault.lastRejectionPhotoBase64 || item.maintenanceTicket?.lastRejectionPhotoBase64;
+        if (rejUrl) setPreviewImage(rejUrl);
+      } else if (target === 'maximo') {
+        const maxUrl =
+          vault.maximoAttachmentBase64 || item.maintenanceTicket?.maximoAttachmentBase64;
+        const maxType =
+          vault.maximoAttachmentType || item.maintenanceTicket?.maximoAttachmentType;
+        const maxName =
+          vault.maximoAttachmentName ||
+          item.maintenanceTicket?.maximoAttachmentName ||
+          `Maximo_${item.maintenanceTicket?.maximoNumber || item.id}.pdf`;
+        if (maxUrl) {
+          if (maxType === 'pdf' || maxUrl.startsWith('data:application/pdf')) {
+            const a = document.createElement('a');
+            a.href = maxUrl;
+            a.download = maxName;
+            a.click();
+          } else {
+            setPreviewImage(maxUrl);
+          }
+        }
+      } else if (target === 'chat' && historyEventId) {
+        const evMedia = vault.historyMediaById?.[historyEventId];
+        const firstImg = evMedia?.find((m) => m.type === 'image')?.url || vault.photoBase64;
+        if (firstImg) setPreviewImage(firstImg);
+      }
+    } finally {
+      setLoadingMediaKey(null);
+    }
+  };
 
   const effectiveTrack = isAdmin ? activeTrack : portalRole;
   const isCleaningMode = effectiveTrack === 'cleaning';
@@ -684,7 +775,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
         </div>
       </div>
 
-      {/* 4. Tickets List */}
+      {/* 4. Tickets List (Paginated + On-Demand Attachment Loading for Old Devices) */}
       {filteredTickets.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center text-slate-500">
           <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
@@ -696,32 +787,36 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {filteredTickets.map((item) => {
-            const ticket = item.maintenanceTicket;
-            const ticketStatus =
-              ticket?.status || (item.status !== 'operational' ? 'open' : 'verified_closed');
-            const names = getFixtureBilingualName(item);
-            const deptKey = resolveEvaluationDepartment(item);
-            const deptInfo = SERVICE_DEPARTMENTS[deptKey];
-            const currentMaxInput =
-              maximoInputs[item.id] !== undefined
-                ? maximoInputs[item.id]
-                : ticket?.maximoNumber || '';
+        <div className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {filteredTickets.slice(0, visibleCount).map((item) => {
+              const ticket = item.maintenanceTicket;
+              const ticketStatus =
+                ticket?.status || (item.status !== 'operational' ? 'open' : 'verified_closed');
+              const names = getFixtureBilingualName(item);
+              const deptKey = resolveEvaluationDepartment(item);
+              const deptInfo = SERVICE_DEPARTMENTS[deptKey];
+              const currentMaxInput =
+                maximoInputs[item.id] !== undefined
+                  ? maximoInputs[item.id]
+                  : ticket?.maximoNumber || '';
 
-            const mediaItems =
-              item.media && item.media.length > 0
-                ? item.media
-                : item.photoBase64
-                ? [
-                    {
-                      id: 'p0',
-                      type: 'image' as const,
-                      url: item.photoBase64,
-                      capturedAt: item.updatedAt,
-                    },
-                  ]
-                : [];
+              const hasBeforeMedia = Boolean(
+                item.hasPhoto ||
+                  (item.mediaCount && item.mediaCount > 0) ||
+                  item.photoBase64 ||
+                  (item.media && item.media.length > 0)
+              );
+              const hasAfterMedia = Boolean(
+                ticket?.hasClosurePhoto || ticket?.closurePhotoBase64
+              );
+              const hasRejectionMedia = Boolean(
+                ticket?.hasRejectionPhoto || ticket?.lastRejectionPhotoBase64
+              );
+              const hasMaximoMedia = Boolean(
+                ticket?.hasMaximoAttachment || ticket?.maximoAttachmentBase64
+              );
+              const loadedVault = loadedMediaByFixtureId[item.id];
 
             return (
               <div
@@ -828,13 +923,19 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                         <span>سبب رفض الإغلاق من رائد المبنى (Reopened by Leader):</span>
                       </span>
                       <p>{ticket.lastRejectionReason}</p>
-                      {ticket.lastRejectionPhotoBase64 && (
+                      {hasRejectionMedia && (
                         <button
                           type="button"
-                          onClick={() => setPreviewImage(ticket.lastRejectionPhotoBase64 || null)}
-                          className="self-start mt-1 text-[11px] font-bold text-rose-700 underline"
+                          onClick={() => handleLoadOnDemandAttachment(item, 'rejection')}
+                          disabled={loadingMediaKey === `${item.id}_rejection_`}
+                          className="self-start mt-1 px-2.5 py-1 rounded-lg bg-rose-100 hover:bg-rose-200 border border-rose-300 text-[11px] font-bold text-rose-800 inline-flex items-center gap-1.5 transition"
                         >
-                          عرض صورة إثبات عدم الإصلاح
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>
+                            {loadingMediaKey === `${item.id}_rejection_`
+                              ? 'جاري تحميل الصورة...'
+                              : 'عرض صورة إثبات عدم الإصلاح (عند الطلب)'}
+                          </span>
                         </button>
                       )}
                     </div>
@@ -868,41 +969,54 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                     </p>
                   )}
 
-                  {/* Inspector Before-Media Strip + Technician After-Photo if available */}
-                  {(mediaItems.length > 0 || ticket?.closurePhotoBase64) && (
-                    <div className="flex items-center gap-2 overflow-x-auto py-1">
-                      {mediaItems.map((m) => (
-                        <div
-                          key={m.id}
-                          onClick={() => m.type === 'image' && setPreviewImage(m.url)}
-                          className="relative w-16 h-16 rounded-xl overflow-hidden border border-slate-300 bg-slate-100 shrink-0 cursor-pointer"
+                  {/* On-Demand Before / After Media Loader Buttons (No Eager Base64 Rendering!) */}
+                  {(hasBeforeMedia || hasAfterMedia) && (
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      {hasBeforeMedia && (
+                        <button
+                          type="button"
+                          onClick={() => handleLoadOnDemandAttachment(item, 'before')}
+                          disabled={loadingMediaKey === `${item.id}_before_`}
+                          className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-800 text-xs font-bold inline-flex items-center gap-1.5 transition"
                         >
-                          {m.type === 'image' ? (
-                            <img src={m.url} alt="" className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-[10px] font-bold">
-                              {m.type.toUpperCase()}
-                            </div>
-                          )}
-                          <span className="absolute bottom-0 inset-x-0 bg-slate-900/75 text-white text-[9px] text-center py-0.5 font-bold">
-                            قبل / Before
+                          <Eye className="w-3.5 h-3.5 text-blue-600" />
+                          <span>
+                            {loadingMediaKey === `${item.id}_before_`
+                              ? 'جاري تحميل الصورة...'
+                              : `عرض صورة العطل قبل الإصلاح (${item.mediaCount || 1})`}
                           </span>
-                        </div>
-                      ))}
+                        </button>
+                      )}
 
-                      {ticket?.closurePhotoBase64 && (
-                        <div
-                          onClick={() => setPreviewImage(ticket.closurePhotoBase64 || null)}
-                          className="relative w-16 h-16 rounded-xl overflow-hidden border-2 border-emerald-500 bg-emerald-50 shrink-0 cursor-pointer"
+                      {hasAfterMedia && (
+                        <button
+                          type="button"
+                          onClick={() => handleLoadOnDemandAttachment(item, 'after')}
+                          disabled={loadingMediaKey === `${item.id}_after_`}
+                          className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs font-bold inline-flex items-center gap-1.5 transition"
                         >
-                          <img
-                            src={ticket.closurePhotoBase64}
-                            alt="After"
-                            className="w-full h-full object-cover"
-                          />
-                          <span className="absolute bottom-0 inset-x-0 bg-emerald-700 text-white text-[9px] text-center py-0.5 font-bold">
-                            بعد / After
+                          <Eye className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>
+                            {loadingMediaKey === `${item.id}_after_`
+                              ? 'جاري تحميل الصورة...'
+                              : 'عرض صورة بعد الإصلاح (After)'}
                           </span>
+                        </button>
+                      )}
+
+                      {/* If user already clicked & loaded this ticket's media into memory, show small clickable thumbnails */}
+                      {loadedVault?.media && loadedVault.media.length > 1 && (
+                        <div className="flex items-center gap-1.5 overflow-x-auto w-full pt-1">
+                          {loadedVault.media.map((m, idx) => (
+                            <button
+                              key={m.id || idx}
+                              type="button"
+                              onClick={() => m.type === 'image' && setPreviewImage(m.url)}
+                              className="px-2 py-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-800 text-[11px] font-bold shrink-0"
+                            >
+                              مرفق #{idx + 1} ({m.type.toUpperCase()})
+                            </button>
+                          ))}
                         </div>
                       )}
                     </div>
@@ -947,7 +1061,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                           <span>
                             {uploadingAttachmentId === item.id
                               ? 'جاري الرفع...'
-                              : ticket?.maximoAttachmentBase64
+                              : hasMaximoMedia
                               ? 'تحديث مرفق البلاغ'
                               : 'رفع PDF / صورة البلاغ'}
                           </span>
@@ -988,38 +1102,34 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                     </div>
                   )}
 
-                  {/* Display existing Maximo Attachment if uploaded */}
-                  {!isCleaningMode && ticket?.maximoAttachmentBase64 && (
+                  {/* Display existing Maximo Attachment on demand if uploaded */}
+                  {!isCleaningMode && hasMaximoMedia && (
                     <div className="flex items-center justify-between bg-blue-50/80 border border-blue-200 rounded-xl px-3 py-1.5 text-xs">
                       <div className="flex items-center gap-1.5 text-blue-900 font-bold truncate">
-                        {ticket.maximoAttachmentType === 'pdf' ? (
+                        {ticket?.maximoAttachmentType === 'pdf' ? (
                           <FileText className="w-4 h-4 text-rose-600 shrink-0" />
                         ) : (
                           <ImageIcon className="w-4 h-4 text-blue-600 shrink-0" />
                         )}
                         <span className="truncate">
-                          مرفق ماكسمو: {ticket.maximoAttachmentName || 'مستند البلاغ'}
+                          مرفق ماكسمو: {ticket?.maximoAttachmentName || 'مستند البلاغ'}
                         </span>
                       </div>
-                      {ticket.maximoAttachmentType === 'pdf' ? (
-                        <a
-                          href={ticket.maximoAttachmentBase64}
-                          download={
-                            ticket.maximoAttachmentName || `Maximo_${ticket.maximoNumber}.pdf`
-                          }
-                          className="text-blue-700 font-bold underline shrink-0 mr-2"
-                        >
-                          تحميل PDF
-                        </a>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setPreviewImage(ticket.maximoAttachmentBase64 || null)}
-                          className="text-blue-700 font-bold underline shrink-0 mr-2"
-                        >
-                          معاينة الصورة
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleLoadOnDemandAttachment(item, 'maximo')}
+                        disabled={loadingMediaKey === `${item.id}_maximo_`}
+                        className="text-blue-700 font-bold underline shrink-0 mr-2 inline-flex items-center gap-1"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>
+                          {loadingMediaKey === `${item.id}_maximo_`
+                            ? 'جاري التحميل...'
+                            : ticket?.maximoAttachmentType === 'pdf'
+                            ? 'تحميل PDF (عند الطلب)'
+                            : 'معاينة الصورة (عند الطلب)'}
+                        </span>
+                      </button>
                     </div>
                   )}
 
@@ -1086,6 +1196,20 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
               </div>
             );
           })}
+          </div>
+
+          {filteredTickets.length > visibleCount && (
+            <button
+              type="button"
+              onClick={() => setVisibleCount((prev) => prev + 20)}
+              className="w-full py-3 bg-white hover:bg-slate-50 border border-slate-300 rounded-2xl text-xs font-bold text-slate-800 shadow-xs flex items-center justify-center gap-2 transition"
+            >
+              <ChevronDown className="w-4 h-4 text-blue-600" />
+              <span>
+                عرض المزيد من البلاغات (+20) — متبقي {filteredTickets.length - visibleCount} بلاغ
+              </span>
+            </button>
+          )}
         </div>
       )}
 
@@ -1276,18 +1400,36 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                         </span>
                       </div>
                       {ev.notes && <p className="text-slate-700">{ev.notes}</p>}
-                      {ev.media && ev.media.length > 0 && (
+                      {(ev.hasMedia || (ev.media && ev.media.length > 0)) && (
                         <div className="flex gap-2 pt-1">
-                          {ev.media.map((m) =>
-                            m.type === 'image' ? (
-                              <img
-                                key={m.id}
-                                src={m.url}
-                                alt=""
-                                onClick={() => setPreviewImage(m.url)}
-                                className="w-16 h-16 rounded-xl object-cover border border-slate-300 cursor-pointer"
-                              />
-                            ) : null
+                          {ev.media && ev.media.length > 0 ? (
+                            ev.media.map((m) =>
+                              m.type === 'image' ? (
+                                <img
+                                  key={m.id}
+                                  src={m.url}
+                                  alt=""
+                                  onClick={() => setPreviewImage(m.url)}
+                                  className="w-16 h-16 rounded-xl object-cover border border-slate-300 cursor-pointer"
+                                />
+                              ) : null
+                            )
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleLoadOnDemandAttachment(liveChatItem, 'chat', ev.id)
+                              }
+                              disabled={loadingMediaKey === `${liveChatItem.id}_chat_${ev.id}`}
+                              className="px-2.5 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-800 text-[11px] font-bold inline-flex items-center gap-1.5 transition"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>
+                                {loadingMediaKey === `${liveChatItem.id}_chat_${ev.id}`
+                                  ? 'جاري تحميل المرفق...'
+                                  : 'عرض الصورة المرفقة (تُحمّل عند الطلب)'}
+                              </span>
+                            </button>
                           )}
                         </div>
                       )}

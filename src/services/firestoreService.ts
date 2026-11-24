@@ -22,6 +22,8 @@ import {
   CampusMapConfig,
   FacilityHistoryEvent,
   FacilityMediaItem,
+  FacilityMediaMeta,
+  FacilityMediaVaultDoc,
   MaintenanceTicketInfo,
 } from '../types/hostel';
 import { resolveEvaluationDepartment, isCleaningOrPestTicket } from '../config/facilityTemplates';
@@ -37,9 +39,254 @@ import {
   checkActiveLeaderAuth,
   checkIsAdminUnlocked,
 } from '../utils/sessionStore';
+import { runWithNetworkProgress } from '../utils/networkProgressStore';
 
 export const EVALUATIONS_COLLECTION = 'evaluations';
 export const LOCAL_STORAGE_KEY = 'hostels_eval_local_cache';
+export const CAMPUS_LIGHT_INDEX_DOC_ID = 'GLOBAL_CAMPUS_LIGHT_INDEX';
+export const MEDIA_DOC_PREFIX = 'MEDIA_';
+
+// ----------------------------------------------------------------------------
+// In-Memory Caches & On-Demand Media Vault LRU (Prevents OOM on Old Devices)
+// ----------------------------------------------------------------------------
+const MAX_LRU_MEDIA_CACHE_ENTRIES = 8;
+const mediaVaultLruCache = new Map<string, FacilityMediaVaultDoc>();
+const migratedLegacyIds = new Set<string>();
+let memoryEvalCache: Record<string, FixtureEvaluation> | null = null;
+let isBackgroundMigrationRunning = false;
+
+export function getMediaVaultFromLru(fixtureId: string): FacilityMediaVaultDoc | undefined {
+  if (!fixtureId) return undefined;
+  const existing = mediaVaultLruCache.get(fixtureId);
+  if (!existing) return undefined;
+  // Refresh LRU order
+  mediaVaultLruCache.delete(fixtureId);
+  mediaVaultLruCache.set(fixtureId, existing);
+  return existing;
+}
+
+export function putMediaVaultInLru(fixtureId: string, vault: FacilityMediaVaultDoc): void {
+  if (!fixtureId || !vault) return;
+  const prev = mediaVaultLruCache.get(fixtureId);
+  const merged: FacilityMediaVaultDoc = {
+    ...(prev || {}),
+    ...vault,
+    id: `${MEDIA_DOC_PREFIX}${fixtureId}`,
+    fixtureId,
+    buildingId: 'MEDIA_VAULT',
+    photoBase64: vault.photoBase64 || prev?.photoBase64,
+    media: vault.media && vault.media.length > 0 ? vault.media : prev?.media,
+    closurePhotoBase64: vault.closurePhotoBase64 || prev?.closurePhotoBase64,
+    maximoAttachmentBase64: vault.maximoAttachmentBase64 || prev?.maximoAttachmentBase64,
+    maximoAttachmentName: vault.maximoAttachmentName || prev?.maximoAttachmentName,
+    maximoAttachmentType: vault.maximoAttachmentType || prev?.maximoAttachmentType,
+    lastRejectionPhotoBase64: vault.lastRejectionPhotoBase64 || prev?.lastRejectionPhotoBase64,
+    historyMediaById: {
+      ...(prev?.historyMediaById || {}),
+      ...(vault.historyMediaById || {}),
+    },
+    updatedAt: vault.updatedAt || prev?.updatedAt || new Date().toISOString(),
+  };
+
+  if (mediaVaultLruCache.has(fixtureId)) {
+    mediaVaultLruCache.delete(fixtureId);
+  }
+  mediaVaultLruCache.set(fixtureId, merged);
+
+  while (mediaVaultLruCache.size > MAX_LRU_MEDIA_CACHE_ENTRIES) {
+    const oldestKey = mediaVaultLruCache.keys().next().value;
+    if (oldestKey) {
+      mediaVaultLruCache.delete(oldestKey);
+    } else {
+      break;
+    }
+  }
+}
+
+function isBase64DataUri(val: unknown): val is string {
+  return typeof val === 'string' && val.length > 64 && (val.startsWith('data:') || val.length > 500);
+}
+
+/**
+ * Extracts any embedded Base64 media from an evaluation object into a dedicated FacilityMediaVaultDoc.
+ * Returns null if the object contains no embedded Base64 blobs.
+ */
+export function extractMediaVaultFromEvaluation(raw: any): FacilityMediaVaultDoc | null {
+  if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string') return null;
+
+  let hasAnyBase64 = false;
+  const vault: FacilityMediaVaultDoc = {
+    id: `${MEDIA_DOC_PREFIX}${raw.id}`,
+    fixtureId: raw.id,
+    buildingId: 'MEDIA_VAULT',
+    updatedAt: raw.updatedAt || new Date().toISOString(),
+  };
+
+  if (isBase64DataUri(raw.photoBase64)) {
+    vault.photoBase64 = raw.photoBase64;
+    hasAnyBase64 = true;
+  }
+
+  if (Array.isArray(raw.media)) {
+    const validMedia = raw.media.filter(
+      (m: any) => m && typeof m === 'object' && isBase64DataUri(m.url)
+    );
+    if (validMedia.length > 0) {
+      vault.media = validMedia;
+      if (!vault.photoBase64) {
+        const firstImg = validMedia.find((m: any) => m.type === 'image');
+        if (firstImg) vault.photoBase64 = firstImg.url;
+      }
+      hasAnyBase64 = true;
+    }
+  }
+
+  const t = raw.maintenanceTicket;
+  if (t && typeof t === 'object') {
+    if (isBase64DataUri(t.closurePhotoBase64)) {
+      vault.closurePhotoBase64 = t.closurePhotoBase64;
+      hasAnyBase64 = true;
+    }
+    if (isBase64DataUri(t.maximoAttachmentBase64)) {
+      vault.maximoAttachmentBase64 = t.maximoAttachmentBase64;
+      vault.maximoAttachmentName = t.maximoAttachmentName;
+      vault.maximoAttachmentType = t.maximoAttachmentType;
+      hasAnyBase64 = true;
+    }
+    if (isBase64DataUri(t.lastRejectionPhotoBase64)) {
+      vault.lastRejectionPhotoBase64 = t.lastRejectionPhotoBase64;
+      hasAnyBase64 = true;
+    }
+  }
+
+  if (Array.isArray(raw.history)) {
+    const historyMediaById: Record<string, FacilityMediaItem[]> = {};
+    for (const h of raw.history) {
+      if (h && typeof h === 'object' && typeof h.id === 'string' && Array.isArray(h.media)) {
+        const validEventMedia = h.media.filter(
+          (m: any) => m && typeof m === 'object' && isBase64DataUri(m.url)
+        );
+        if (validEventMedia.length > 0) {
+          historyMediaById[h.id] = validEventMedia;
+          hasAnyBase64 = true;
+        }
+      }
+    }
+    if (Object.keys(historyMediaById).length > 0) {
+      vault.historyMediaById = historyMediaById;
+    }
+  }
+
+  return hasAnyBase64 ? vault : null;
+}
+
+/**
+ * Strips all heavy Base64 blobs from an evaluation record while preserving lightweight
+ * metadata flags (hasPhoto, mediaCount, mediaMeta, hasClosurePhoto, hasMaximoAttachment, etc.)
+ * so devices never run out of RAM or localStorage quota.
+ */
+export function stripHeavyMediaFromEvaluation(data: any): FixtureEvaluation {
+  if (!data || typeof data !== 'object') return data;
+
+  // Preserve any in-flight Base64 in the small 8-item LRU cache before stripping
+  const extracted = extractMediaVaultFromEvaluation(data);
+  if (extracted && data.id) {
+    putMediaVaultInLru(data.id, extracted);
+  }
+
+  const copy: any = { ...data };
+  if ('secretCode' in copy) {
+    delete copy.secretCode;
+  }
+
+  const rawMedia: FacilityMediaItem[] = Array.isArray(copy.media) ? copy.media : [];
+  const existingMeta: FacilityMediaMeta[] = Array.isArray(copy.mediaMeta) ? copy.mediaMeta : [];
+
+  const mediaMeta: FacilityMediaMeta[] =
+    existingMeta.length > 0
+      ? existingMeta
+      : rawMedia.map((m) => ({
+          id: m.id || `m_${Date.now()}`,
+          type: m.type || 'image',
+          name: m.name,
+          capturedAt: m.capturedAt || copy.updatedAt || new Date().toISOString(),
+          capturedBy: m.capturedBy || copy.inspectorName,
+        }));
+
+  const hasPhoto = Boolean(
+    copy.hasPhoto ||
+      isBase64DataUri(copy.photoBase64) ||
+      rawMedia.length > 0 ||
+      mediaMeta.length > 0 ||
+      (typeof copy.mediaCount === 'number' && copy.mediaCount > 0)
+  );
+
+  const mediaCount =
+    mediaMeta.length > 0
+      ? mediaMeta.length
+      : typeof copy.mediaCount === 'number' && copy.mediaCount > 0
+      ? copy.mediaCount
+      : hasPhoto
+      ? 1
+      : 0;
+
+  copy.hasPhoto = hasPhoto;
+  copy.mediaCount = mediaCount;
+  if (mediaMeta.length > 0) {
+    copy.mediaMeta = mediaMeta;
+  }
+  delete copy.photoBase64;
+  delete copy.media;
+
+  if (copy.maintenanceTicket && typeof copy.maintenanceTicket === 'object') {
+    const ticketCopy: MaintenanceTicketInfo = { ...copy.maintenanceTicket };
+    ticketCopy.hasClosurePhoto = Boolean(
+      ticketCopy.hasClosurePhoto || isBase64DataUri(ticketCopy.closurePhotoBase64)
+    );
+    ticketCopy.hasMaximoAttachment = Boolean(
+      ticketCopy.hasMaximoAttachment || isBase64DataUri(ticketCopy.maximoAttachmentBase64)
+    );
+    ticketCopy.hasRejectionPhoto = Boolean(
+      ticketCopy.hasRejectionPhoto || isBase64DataUri(ticketCopy.lastRejectionPhotoBase64)
+    );
+    delete ticketCopy.closurePhotoBase64;
+    delete ticketCopy.maximoAttachmentBase64;
+    delete ticketCopy.lastRejectionPhotoBase64;
+    copy.maintenanceTicket = ticketCopy;
+  }
+
+  if (Array.isArray(copy.history)) {
+    copy.history = copy.history.slice(0, 25).map((ev: any) => {
+      if (!ev || typeof ev !== 'object') return ev;
+      const evCopy = { ...ev };
+      const evRawMedia: FacilityMediaItem[] = Array.isArray(evCopy.media) ? evCopy.media : [];
+      const evExistingMeta: FacilityMediaMeta[] = Array.isArray(evCopy.mediaMeta)
+        ? evCopy.mediaMeta
+        : [];
+      const evMeta: FacilityMediaMeta[] =
+        evExistingMeta.length > 0
+          ? evExistingMeta
+          : evRawMedia.map((m) => ({
+              id: m.id || `hm_${Date.now()}`,
+              type: m.type || 'image',
+              name: m.name,
+              capturedAt: m.capturedAt || evCopy.timestamp || new Date().toISOString(),
+              capturedBy: m.capturedBy || evCopy.actorName,
+            }));
+      evCopy.hasMedia = Boolean(
+        evCopy.hasMedia || evRawMedia.length > 0 || evMeta.length > 0
+      );
+      if (evMeta.length > 0) {
+        evCopy.mediaMeta = evMeta;
+      }
+      delete evCopy.media;
+      delete evCopy.maximoAttachmentUrl;
+      return evCopy;
+    });
+  }
+
+  return copy as FixtureEvaluation;
+}
 
 export interface CloudSaveResult {
   success: boolean;
@@ -74,42 +321,69 @@ export interface SyncBatchResult {
 }
 
 // ----------------------------------------------------------------------------
-// Local Storage Cache Helpers
+// Local Storage Cache Helpers (In-Memory Memoized + Stripped Lightweight Records)
 // ----------------------------------------------------------------------------
 export function getLocalCache(): Record<string, FixtureEvaluation> {
+  if (memoryEvalCache) {
+    return { ...memoryEvalCache };
+  }
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (!raw) return {};
+    if (!raw) {
+      memoryEvalCache = {};
+      return {};
+    }
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return {};
+    if (!parsed || typeof parsed !== 'object') {
+      memoryEvalCache = {};
+      return {};
+    }
 
     const sanitized: Record<string, FixtureEvaluation> = {};
-    let hasCorrupted = false;
+    let needsRewrite = false;
 
     for (const [key, val] of Object.entries(parsed)) {
       if (
         key &&
         key !== 'undefined' &&
         key !== 'null' &&
+        !key.startsWith(MEDIA_DOC_PREFIX) &&
+        key !== CAMPUS_LIGHT_INDEX_DOC_ID &&
         val &&
         typeof val === 'object' &&
         typeof (val as any).buildingId === 'string' &&
+        (val as any).buildingId !== 'MEDIA_VAULT' &&
+        (val as any).buildingId !== 'CAMPUS_GLOBAL' &&
         typeof (val as any).id === 'string'
       ) {
-        sanitized[key] = val as FixtureEvaluation;
+        const rawObj = val as any;
+        if (
+          rawObj.photoBase64 ||
+          (Array.isArray(rawObj.media) && rawObj.media.length > 0) ||
+          rawObj.maintenanceTicket?.closurePhotoBase64 ||
+          rawObj.maintenanceTicket?.maximoAttachmentBase64 ||
+          rawObj.maintenanceTicket?.lastRejectionPhotoBase64 ||
+          'secretCode' in rawObj
+        ) {
+          needsRewrite = true;
+        }
+        sanitized[key] = stripHeavyMediaFromEvaluation(rawObj);
       } else {
-        hasCorrupted = true;
+        needsRewrite = true;
       }
     }
 
-    if (hasCorrupted) {
+    memoryEvalCache = sanitized;
+
+    if (needsRewrite) {
       try {
         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(sanitized));
       } catch {}
     }
 
-    return sanitized;
+    return { ...sanitized };
   } catch {
+    memoryEvalCache = {};
     return {};
   }
 }
@@ -123,28 +397,84 @@ export function getLocalCacheCount(): number {
 }
 
 /**
- * Strip sensitive internal transport fields (e.g. secretCode) from evaluation objects
- * before caching in localStorage, state, or exporting to JSON.
+ * Strip sensitive internal transport fields (e.g. secretCode) AND heavy Base64 media
+ * from evaluation objects before caching in localStorage, state, or exporting.
  */
 export function sanitizeEvaluationRecord(data: any): FixtureEvaluation {
-  if (!data || typeof data !== 'object') return data;
-  const copy = { ...data };
-  if ('secretCode' in copy) {
-    delete copy.secretCode;
-  }
-  return copy as FixtureEvaluation;
+  return stripHeavyMediaFromEvaluation(data);
 }
 
 export function saveToLocalCache(evaluation: FixtureEvaluation): void {
-  if (!evaluation || !evaluation.id || !evaluation.buildingId) {
+  if (
+    !evaluation ||
+    !evaluation.id ||
+    !evaluation.buildingId ||
+    evaluation.id.startsWith(MEDIA_DOC_PREFIX) ||
+    evaluation.id === CAMPUS_LIGHT_INDEX_DOC_ID ||
+    evaluation.buildingId === 'MEDIA_VAULT' ||
+    evaluation.buildingId === 'CAMPUS_GLOBAL'
+  ) {
     return;
   }
   try {
     const cache = getLocalCache();
-    cache[evaluation.id] = sanitizeEvaluationRecord(evaluation);
+    const slim = stripHeavyMediaFromEvaluation(evaluation);
+    cache[slim.id] = slim;
+    memoryEvalCache = cache;
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(cache));
   } catch (err) {
     console.warn('LocalStorage save failed:', err);
+  }
+}
+
+/**
+ * Batch-saves multiple evaluations to localStorage in a SINGLE JSON.stringify call.
+ * Eliminates the O(N^2) parse/stringify loop that caused OOM crashes on old mobile devices.
+ */
+export function saveBatchToLocalCache(
+  evaluations: FixtureEvaluation[],
+  deletedIds: string[] = []
+): void {
+  try {
+    const cache = getLocalCache();
+    let changed = false;
+
+    for (const delId of deletedIds) {
+      if (delId && cache[delId]) {
+        delete cache[delId];
+        changed = true;
+      }
+    }
+
+    for (const evaluation of evaluations) {
+      if (
+        !evaluation ||
+        !evaluation.id ||
+        !evaluation.buildingId ||
+        evaluation.id.startsWith(MEDIA_DOC_PREFIX) ||
+        evaluation.id === CAMPUS_LIGHT_INDEX_DOC_ID ||
+        evaluation.buildingId === 'MEDIA_VAULT' ||
+        evaluation.buildingId === 'CAMPUS_GLOBAL'
+      ) {
+        continue;
+      }
+      if (evaluation.isDeleted) {
+        if (cache[evaluation.id]) {
+          delete cache[evaluation.id];
+          changed = true;
+        }
+        continue;
+      }
+      cache[evaluation.id] = stripHeavyMediaFromEvaluation(evaluation);
+      changed = true;
+    }
+
+    if (changed) {
+      memoryEvalCache = cache;
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(cache));
+    }
+  } catch (err) {
+    console.warn('LocalStorage batch save failed:', err);
   }
 }
 
@@ -154,6 +484,7 @@ export function removeFromLocalCache(id: string): void {
     const cache = getLocalCache();
     if (cache[id]) {
       delete cache[id];
+      memoryEvalCache = cache;
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(cache));
     }
   } catch (err) {
@@ -201,23 +532,252 @@ export function sanitizeSafeHttpUrl(url?: string): string | undefined {
 }
 
 /**
- * Helper to bound history array size so Firestore documents stay well under 1 MiB.
+ * Helper to bound history array size and strip heavy Base64 from history events
+ * so main evaluation documents stay < 1 KB.
  */
 function appendFacilityHistoryEvent(
   existingHistory: FacilityHistoryEvent[] | undefined,
   newEvent: FacilityHistoryEvent
 ): FacilityHistoryEvent[] {
   const list = [newEvent, ...(existingHistory || [])].slice(0, 25);
-  return list.map((ev, idx) => {
-    // Keep media Base64 on the 4 most recent history entries; strip heavy data URLs on older ones
-    if (idx >= 4) {
-      const copy = { ...ev };
-      delete copy.media;
-      delete copy.maximoAttachmentUrl;
-      return copy;
+  return list.map((ev) => {
+    const copy = { ...ev };
+    const rawMedia: FacilityMediaItem[] = Array.isArray(copy.media) ? copy.media : [];
+    const existingMeta: FacilityMediaMeta[] = Array.isArray(copy.mediaMeta) ? copy.mediaMeta : [];
+    const meta: FacilityMediaMeta[] =
+      existingMeta.length > 0
+        ? existingMeta
+        : rawMedia.map((m) => ({
+            id: m.id,
+            type: m.type,
+            name: m.name,
+            capturedAt: m.capturedAt,
+            capturedBy: m.capturedBy,
+          }));
+    copy.hasMedia = Boolean(copy.hasMedia || rawMedia.length > 0 || meta.length > 0);
+    if (meta.length > 0) {
+      copy.mediaMeta = meta;
     }
-    return ev;
+    delete copy.media;
+    delete copy.maximoAttachmentUrl;
+    return copy;
   });
+}
+
+/**
+ * Compact version of a stripped evaluation for the global lightweight index document
+ * so 1,000+ tickets fit comfortably inside a single < 300 KB Firestore document.
+ */
+function toCompactIndexEntry(evaluation: FixtureEvaluation): FixtureEvaluation {
+  const slim = stripHeavyMediaFromEvaluation(evaluation);
+  return {
+    ...slim,
+    history: slim.history ? slim.history.slice(0, 5) : undefined,
+  };
+}
+
+/**
+ * On-Demand Media Loader: Fetches heavy Base64 attachments (photos, PDFs, videos)
+ * ONLY when the user explicitly clicks/touches a specific ticket's attachment button.
+ */
+export async function fetchFacilityMediaOnDemand(
+  fixtureId: string
+): Promise<FacilityMediaVaultDoc | null> {
+  if (!fixtureId) return null;
+
+  const cached = getMediaVaultFromLru(fixtureId);
+  if (
+    cached &&
+    (cached.photoBase64 ||
+      (cached.media && cached.media.length > 0) ||
+      cached.closurePhotoBase64 ||
+      cached.maximoAttachmentBase64 ||
+      cached.lastRejectionPhotoBase64 ||
+      (cached.historyMediaById && Object.keys(cached.historyMediaById).length > 0))
+  ) {
+    return cached;
+  }
+
+  return runWithNetworkProgress(
+    {
+      direction: 'download',
+      titleAr: 'جاري تحميل المرفق / الصورة عند الطلب...',
+      detailAr: `المرفق: ${fixtureId}`,
+      estimatedDurationMs: 1300,
+    },
+    async (updateProgress) => {
+      try {
+        updateProgress(25, `جاري جلب وسائط المرفق (${fixtureId})...`);
+        const mediaDocRef = doc(db, EVALUATIONS_COLLECTION, `${MEDIA_DOC_PREFIX}${fixtureId}`);
+        const mediaSnap = await getDoc(mediaDocRef);
+        let vault: FacilityMediaVaultDoc | null = null;
+
+        if (mediaSnap.exists()) {
+          const d = mediaSnap.data();
+          vault = {
+            id: `${MEDIA_DOC_PREFIX}${fixtureId}`,
+            fixtureId,
+            buildingId: 'MEDIA_VAULT',
+            photoBase64: d.photoBase64,
+            media: Array.isArray(d.media) ? d.media : undefined,
+            closurePhotoBase64: d.closurePhotoBase64,
+            maximoAttachmentBase64: d.maximoAttachmentBase64,
+            maximoAttachmentName: d.maximoAttachmentName,
+            maximoAttachmentType: d.maximoAttachmentType,
+            lastRejectionPhotoBase64: d.lastRejectionPhotoBase64,
+            historyMediaById: d.historyMediaById,
+            updatedAt: d.updatedAt || new Date().toISOString(),
+          };
+        }
+
+        const hasCompleteMedia =
+          vault &&
+          (vault.photoBase64 ||
+            (vault.media && vault.media.length > 0) ||
+            vault.closurePhotoBase64 ||
+            vault.maximoAttachmentBase64 ||
+            vault.lastRejectionPhotoBase64);
+
+        // Fallback for week-1 legacy documents that still had Base64 embedded in /evaluations/{fixtureId}
+        if (!hasCompleteMedia) {
+          updateProgress(60, 'جاري فحص السجل الأساسي للمرفق...');
+          const legacyRef = doc(db, EVALUATIONS_COLLECTION, fixtureId);
+          const legacySnap = await getDoc(legacyRef);
+          if (legacySnap.exists()) {
+            const rawLegacy = legacySnap.data();
+            const extracted = extractMediaVaultFromEvaluation(rawLegacy);
+            if (extracted) {
+              vault = {
+                ...extracted,
+                ...(vault || {}),
+                id: `${MEDIA_DOC_PREFIX}${fixtureId}`,
+                fixtureId,
+                buildingId: 'MEDIA_VAULT',
+                photoBase64: vault?.photoBase64 || extracted.photoBase64,
+                media: vault?.media && vault.media.length > 0 ? vault.media : extracted.media,
+                closurePhotoBase64: vault?.closurePhotoBase64 || extracted.closurePhotoBase64,
+                maximoAttachmentBase64:
+                  vault?.maximoAttachmentBase64 || extracted.maximoAttachmentBase64,
+                maximoAttachmentName:
+                  vault?.maximoAttachmentName || extracted.maximoAttachmentName,
+                maximoAttachmentType:
+                  vault?.maximoAttachmentType || extracted.maximoAttachmentType,
+                lastRejectionPhotoBase64:
+                  vault?.lastRejectionPhotoBase64 || extracted.lastRejectionPhotoBase64,
+                historyMediaById: {
+                  ...(extracted.historyMediaById || {}),
+                  ...(vault?.historyMediaById || {}),
+                },
+                updatedAt: vault?.updatedAt || extracted.updatedAt,
+              };
+
+              // Lazily migrate this legacy doc in the background if caller is authenticated
+              const secretCode = getDecodedSecurityCode() || getAdminRawSecurityCode();
+              if (secretCode && !migratedLegacyIds.has(fixtureId)) {
+                migrateSingleLegacyDocInBackground(rawLegacy, extracted, secretCode).catch(
+                  () => {}
+                );
+              }
+            }
+          }
+        }
+
+        if (vault) {
+          putMediaVaultInLru(fixtureId, vault);
+        }
+        updateProgress(95, 'اكتمل تحميل المرفق');
+        return vault;
+      } catch (err) {
+        console.warn(`[HostelsEval] On-demand media fetch failed for ${fixtureId}:`, err);
+        return cached || null;
+      }
+    }
+  );
+}
+
+async function migrateSingleLegacyDocInBackground(
+  rawDoc: any,
+  extractedVault: FacilityMediaVaultDoc,
+  secretCode: string
+): Promise<void> {
+  if (!rawDoc || !rawDoc.id || migratedLegacyIds.has(rawDoc.id)) return;
+  migratedLegacyIds.add(rawDoc.id);
+
+  try {
+    // 1. Save heavy media to /evaluations/MEDIA_${id}
+    const mediaRef = doc(db, EVALUATIONS_COLLECTION, `${MEDIA_DOC_PREFIX}${rawDoc.id}`);
+    await setDoc(
+      mediaRef,
+      stripUndefinedValues({
+        ...extractedVault,
+        secretCode,
+        updatedAt: new Date().toISOString(),
+      }),
+      { merge: true }
+    );
+
+    // 2. Overwrite main evaluation document /evaluations/${id} WITHOUT any Base64
+    const stripped = stripHeavyMediaFromEvaluation(rawDoc);
+    const evalRef = doc(db, EVALUATIONS_COLLECTION, rawDoc.id);
+    await setDoc(
+      evalRef,
+      stripUndefinedValues({
+        ...stripped,
+        secretCode,
+      })
+    );
+  } catch (err) {
+    migratedLegacyIds.delete(rawDoc.id);
+    console.warn(`[HostelsEval] Legacy media migration skipped for ${rawDoc?.id}:`, err);
+  }
+}
+
+async function buildLightIndexAndMigrateLegacyDocs(
+  strippedEvaluations: FixtureEvaluation[],
+  legacyToMigrate: Array<{ raw: any; extracted: FacilityMediaVaultDoc }>,
+  secretCode: string
+): Promise<void> {
+  if (isBackgroundMigrationRunning || !secretCode) return;
+  isBackgroundMigrationRunning = true;
+
+  try {
+    // 1. Write the global lightweight campus index so all devices load in 1 fast read (< 300ms)
+    const evaluationsMap: Record<string, FixtureEvaluation> = {};
+    for (const item of strippedEvaluations) {
+      if (
+        item &&
+        item.id &&
+        !item.isDeleted &&
+        !item.id.startsWith(MEDIA_DOC_PREFIX) &&
+        item.id !== CAMPUS_LIGHT_INDEX_DOC_ID &&
+        item.buildingId !== 'MEDIA_VAULT' &&
+        item.buildingId !== 'CAMPUS_GLOBAL'
+      ) {
+        evaluationsMap[item.id] = toCompactIndexEntry(item);
+      }
+    }
+
+    const indexRef = doc(db, EVALUATIONS_COLLECTION, CAMPUS_LIGHT_INDEX_DOC_ID);
+    await setDoc(
+      indexRef,
+      stripUndefinedValues({
+        id: CAMPUS_LIGHT_INDEX_DOC_ID,
+        buildingId: 'CAMPUS_GLOBAL',
+        secretCode,
+        updatedAt: new Date().toISOString(),
+        evaluationsMap,
+      })
+    );
+
+    // 2. Migrate any legacy documents that still had embedded Base64
+    for (const { raw, extracted } of legacyToMigrate) {
+      await migrateSingleLegacyDocInBackground(raw, extracted, secretCode);
+    }
+  } catch (err) {
+    console.warn('[HostelsEval] Background index build / legacy migration warning:', err);
+  } finally {
+    isBackgroundMigrationRunning = false;
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -308,7 +868,30 @@ export async function saveEvaluation(
     };
   }
 
+  if (ticket && prevEval?.maintenanceTicket) {
+    ticket = {
+      ...ticket,
+      hasClosurePhoto: Boolean(
+        ticket.closurePhotoBase64 ||
+          ticket.hasClosurePhoto ||
+          prevEval.maintenanceTicket.hasClosurePhoto
+      ),
+      hasMaximoAttachment: Boolean(
+        ticket.maximoAttachmentBase64 ||
+          ticket.hasMaximoAttachment ||
+          prevEval.maintenanceTicket.hasMaximoAttachment
+      ),
+      hasRejectionPhoto: Boolean(
+        ticket.lastRejectionPhotoBase64 ||
+          ticket.hasRejectionPhoto ||
+          prevEval.maintenanceTicket.hasRejectionPhoto
+      ),
+    };
+  }
+
   // Append event to facility's permanent history log
+  const rawHistoryMedia =
+    historyOverride?.media !== undefined ? historyOverride.media : mediaList.slice(0, 3);
   const newHistoryEvent: FacilityHistoryEvent = {
     id: `hist_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     timestamp: nowIso,
@@ -318,7 +901,18 @@ export async function saveEvaluation(
     status: evaluation.status,
     defects: evaluation.defects || [],
     notes: historyOverride?.notes !== undefined ? historyOverride.notes : evaluation.notes,
-    media: historyOverride?.media !== undefined ? historyOverride.media : mediaList.slice(0, 3),
+    media: rawHistoryMedia,
+    hasMedia: rawHistoryMedia.length > 0,
+    mediaMeta:
+      rawHistoryMedia.length > 0
+        ? rawHistoryMedia.map((m) => ({
+            id: m.id,
+            type: m.type,
+            name: m.name,
+            capturedAt: m.capturedAt,
+            capturedBy: m.capturedBy,
+          }))
+        : undefined,
     maximoNumber: historyOverride?.maximoNumber || ticket?.maximoNumber,
     maximoUrl: historyOverride?.maximoUrl || ticket?.maximoUrl,
     maximoAttachmentUrl: historyOverride?.maximoAttachmentUrl,
@@ -326,97 +920,231 @@ export async function saveEvaluation(
     evaluationRating: historyOverride?.evaluationRating,
   };
 
+  // Extract any new Base64 media before stripping
+  const unstrippedEvaluation: FixtureEvaluation = {
+    ...evaluation,
+    photoBase64: primaryPhoto,
+    hasPhoto: Boolean(
+      primaryPhoto ||
+        mediaList.length > 0 ||
+        evaluation.hasPhoto ||
+        prevEval?.hasPhoto ||
+        (evaluation.mediaCount && evaluation.mediaCount > 0) ||
+        (prevEval?.mediaCount && prevEval.mediaCount > 0)
+    ),
+    media: mediaList.length > 0 ? mediaList : undefined,
+    mediaMeta:
+      mediaList.length > 0
+        ? mediaList.map((m) => ({
+            id: m.id,
+            type: m.type,
+            name: m.name,
+            capturedAt: m.capturedAt,
+            capturedBy: m.capturedBy,
+          }))
+        : evaluation.mediaMeta || prevEval?.mediaMeta,
+    mediaCount:
+      mediaList.length > 0
+        ? mediaList.length
+        : evaluation.mediaCount ?? prevEval?.mediaCount ?? (evaluation.hasPhoto || prevEval?.hasPhoto ? 1 : 0),
+    maintenanceTicket: ticket,
+    history: [newHistoryEvent, ...(evaluation.history || prevEval?.history || [])].slice(0, 25),
+    updatedAt: nowIso,
+  };
+
+  const extractedVault = extractMediaVaultFromEvaluation(unstrippedEvaluation);
+  if (extractedVault) {
+    putMediaVaultInLru(unstrippedEvaluation.id, extractedVault);
+  }
+
   const mergedHistory = appendFacilityHistoryEvent(
     evaluation.history || prevEval?.history,
     newHistoryEvent
   );
 
-  const enrichedEvaluation: FixtureEvaluation = {
-    ...evaluation,
-    photoBase64: primaryPhoto,
-    hasPhoto: !!primaryPhoto || mediaList.length > 0,
-    media: mediaList,
-    maintenanceTicket: ticket,
+  const strippedEvaluation: FixtureEvaluation = stripHeavyMediaFromEvaluation({
+    ...unstrippedEvaluation,
     history: mergedHistory,
-    updatedAt: nowIso,
-  };
+  });
 
-  // Update local cache for instant UI responsiveness
-  saveToLocalCache(enrichedEvaluation);
+  // Update local cache with stripped lightweight record for instant UI responsiveness
+  saveToLocalCache(strippedEvaluation);
 
-  // Record timeline scan event
+  // Record lightweight timeline scan event (zero Base64 in localStorage)
   recordEvaluationHistory({
     id: newHistoryEvent.id,
-    fixtureId: enrichedEvaluation.id,
-    buildingId: enrichedEvaluation.buildingId,
-    floor: enrichedEvaluation.floor,
-    wingId: enrichedEvaluation.wingId,
-    categoryCode: enrichedEvaluation.categoryCode,
-    fixtureTypeCode: enrichedEvaluation.fixtureTypeCode,
-    fixtureNameAr: enrichedEvaluation.fixtureTypeCode,
-    status: enrichedEvaluation.status,
-    defects: enrichedEvaluation.defects || [],
+    fixtureId: strippedEvaluation.id,
+    buildingId: strippedEvaluation.buildingId,
+    floor: strippedEvaluation.floor,
+    wingId: strippedEvaluation.wingId,
+    categoryCode: strippedEvaluation.categoryCode,
+    fixtureTypeCode: strippedEvaluation.fixtureTypeCode,
+    fixtureNameAr: strippedEvaluation.fixtureTypeCode,
+    status: strippedEvaluation.status,
+    defects: strippedEvaluation.defects || [],
     notes: newHistoryEvent.notes,
-    rating: enrichedEvaluation.rating,
-    photoBase64: primaryPhoto,
-    media: mediaList,
+    rating: strippedEvaluation.rating,
+    hasPhoto: Boolean(newHistoryEvent.hasMedia || strippedEvaluation.hasPhoto),
+    mediaMeta: newHistoryEvent.mediaMeta || strippedEvaluation.mediaMeta,
     maximoNumber: ticket?.maximoNumber,
     ticketStatus: ticket?.status,
     inspectorName: newHistoryEvent.actorName,
     timestamp: nowIso,
     isResolved:
-      enrichedEvaluation.status === 'operational' || ticket?.status === 'verified_closed',
+      strippedEvaluation.status === 'operational' || ticket?.status === 'verified_closed',
   });
 
   // Strip all undefined properties so Firestore accepts the document
   const rawPayload: Record<string, any> = {
-    ...enrichedEvaluation,
+    ...strippedEvaluation,
     secretCode, // Attaches secret code to satisfy Firestore Rule: request.resource.data.secretCode == get(...).data.s
     updatedAt: nowIso,
   };
   const cleanPayload = stripUndefinedValues(rawPayload);
 
-  try {
-    const docRef = doc(db, EVALUATIONS_COLLECTION, enrichedEvaluation.id);
-    await setDoc(docRef, cleanPayload, { merge: true });
+  return runWithNetworkProgress(
+    {
+      direction: 'upload',
+      titleAr: extractedVault
+        ? 'جاري رفع البلاغ والمرفقات إلى السحابة...'
+        : 'جاري حفظ تحديثات البلاغ سحابياً...',
+      detailAr: `${strippedEvaluation.buildingId} • ${strippedEvaluation.id}`,
+      estimatedDurationMs: extractedVault ? 2000 : 900,
+    },
+    async (updateProgress) => {
+      try {
+        // 1. If there is Base64 media in this save, store it in dedicated /evaluations/MEDIA_${id}
+        if (extractedVault) {
+          updateProgress(25, 'جاري رفع الصور والمرفقات إلى خزنة الوسائط...');
+          const mediaDocRef = doc(
+            db,
+            EVALUATIONS_COLLECTION,
+            `${MEDIA_DOC_PREFIX}${strippedEvaluation.id}`
+          );
+          const mediaPayload: Record<string, any> = {
+            id: `${MEDIA_DOC_PREFIX}${strippedEvaluation.id}`,
+            fixtureId: strippedEvaluation.id,
+            buildingId: 'MEDIA_VAULT',
+            secretCode,
+            updatedAt: nowIso,
+          };
+          if (extractedVault.photoBase64) mediaPayload.photoBase64 = extractedVault.photoBase64;
+          if (extractedVault.media && extractedVault.media.length > 0) {
+            mediaPayload.media = extractedVault.media;
+          }
+          if (extractedVault.closurePhotoBase64) {
+            mediaPayload.closurePhotoBase64 = extractedVault.closurePhotoBase64;
+          }
+          if (extractedVault.maximoAttachmentBase64) {
+            mediaPayload.maximoAttachmentBase64 = extractedVault.maximoAttachmentBase64;
+            mediaPayload.maximoAttachmentName = extractedVault.maximoAttachmentName;
+            mediaPayload.maximoAttachmentType = extractedVault.maximoAttachmentType;
+          }
+          if (extractedVault.lastRejectionPhotoBase64) {
+            mediaPayload.lastRejectionPhotoBase64 = extractedVault.lastRejectionPhotoBase64;
+          }
+          if (extractedVault.historyMediaById) {
+            mediaPayload.historyMediaById = extractedVault.historyMediaById;
+          }
+          await setDoc(mediaDocRef, stripUndefinedValues(mediaPayload), { merge: true });
+          migratedLegacyIds.add(strippedEvaluation.id);
+        } else if (
+          strippedEvaluation.hasPhoto &&
+          !migratedLegacyIds.has(strippedEvaluation.id)
+        ) {
+          // Ensure any legacy embedded media on /evaluations/${id} is preserved in MEDIA_${id} before overwriting
+          try {
+            const existingSnap = await getDoc(
+              doc(db, EVALUATIONS_COLLECTION, strippedEvaluation.id)
+            );
+            if (existingSnap.exists()) {
+              const rawExisting = existingSnap.data();
+              const legacyMedia = extractMediaVaultFromEvaluation(rawExisting);
+              if (legacyMedia) {
+                await setDoc(
+                  doc(
+                    db,
+                    EVALUATIONS_COLLECTION,
+                    `${MEDIA_DOC_PREFIX}${strippedEvaluation.id}`
+                  ),
+                  stripUndefinedValues({
+                    ...legacyMedia,
+                    secretCode,
+                    updatedAt: nowIso,
+                  }),
+                  { merge: true }
+                );
+              }
+            }
+            migratedLegacyIds.add(strippedEvaluation.id);
+          } catch {}
+        }
 
-    // Notify listeners of cloud success
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(
-        new CustomEvent('hostels_cloud_sync_event', {
-          detail: { type: 'save_success', id: enrichedEvaluation.id },
-        })
-      );
+        // 2. Write lightweight stripped evaluation document (ZERO Base64!)
+        updateProgress(65, 'جاري تحديث سجل المرفق الخفيف...');
+        const docRef = doc(db, EVALUATIONS_COLLECTION, strippedEvaluation.id);
+        await setDoc(docRef, cleanPayload);
+
+        // 3. Update global lightweight index document for instant campus-wide loading
+        updateProgress(85, 'جاري تحديث الفهرس السريع للبلاغات...');
+        try {
+          const indexRef = doc(db, EVALUATIONS_COLLECTION, CAMPUS_LIGHT_INDEX_DOC_ID);
+          await setDoc(
+            indexRef,
+            stripUndefinedValues({
+              id: CAMPUS_LIGHT_INDEX_DOC_ID,
+              buildingId: 'CAMPUS_GLOBAL',
+              secretCode,
+              updatedAt: nowIso,
+              evaluationsMap: {
+                [strippedEvaluation.id]: toCompactIndexEntry(strippedEvaluation),
+              },
+            }),
+            { merge: true }
+          );
+        } catch (indexErr) {
+          console.warn('[HostelsEval] Lightweight index update warning:', indexErr);
+        }
+
+        // Notify listeners of cloud success
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('hostels_cloud_sync_event', {
+              detail: { type: 'save_success', id: strippedEvaluation.id },
+            })
+          );
+        }
+
+        return { success: true, cloudSynced: true };
+      } catch (err: any) {
+        const errorMsg = err?.message || 'Firestore write failed';
+        const errorCode = err?.code || 'unknown';
+
+        console.warn(`[HostelsEval Firebase] Write failed (${errorCode}):`, errorMsg);
+
+        // Notify listeners of cloud permission or network issue
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('hostels_cloud_sync_event', {
+              detail: {
+                type: 'save_warning',
+                id: strippedEvaluation.id,
+                error: errorMsg,
+                code: errorCode,
+              },
+            })
+          );
+        }
+
+        return {
+          success: true, // Local persistence succeeded
+          cloudSynced: false,
+          cloudError: errorMsg,
+          code: errorCode,
+        };
+      }
     }
-
-    return { success: true, cloudSynced: true };
-  } catch (err: any) {
-    const errorMsg = err?.message || 'Firestore write failed';
-    const errorCode = err?.code || 'unknown';
-
-    console.warn(`[HostelsEval Firebase] Write failed (${errorCode}):`, errorMsg);
-
-    // Notify listeners of cloud permission or network issue
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(
-        new CustomEvent('hostels_cloud_sync_event', {
-          detail: {
-            type: 'save_warning',
-            id: enrichedEvaluation.id,
-            error: errorMsg,
-            code: errorCode,
-          },
-        })
-      );
-    }
-
-    return {
-      success: true, // Local persistence succeeded
-      cloudSynced: false,
-      cloudError: errorMsg,
-      code: errorCode,
-    };
-  }
+  );
 }
 
 // ----------------------------------------------------------------------------
@@ -745,16 +1473,45 @@ export function subscribeToBuildingEvaluations(
       q,
       (snapshot) => {
         const remoteList: FixtureEvaluation[] = [];
+        const deletedIds: string[] = [];
+        const legacyToMigrate: Array<{ raw: any; extracted: FacilityMediaVaultDoc }> = [];
+
         snapshot.forEach((docSnap) => {
-          const data = sanitizeEvaluationRecord(docSnap.data());
-          if (data && data.id && data.buildingId) {
-            if (data.isDeleted) {
-              removeFromLocalCache(data.id);
-            } else {
-              remoteList.push(data);
-            }
+          if (
+            docSnap.id.startsWith(MEDIA_DOC_PREFIX) ||
+            docSnap.id === CAMPUS_LIGHT_INDEX_DOC_ID ||
+            docSnap.id === CAMPUS_MAP_CONFIG_DOC_ID
+          ) {
+            return;
+          }
+          const raw = docSnap.data();
+          if (!raw || !raw.id || !raw.buildingId) return;
+
+          const extracted = extractMediaVaultFromEvaluation(raw);
+          if (extracted) {
+            legacyToMigrate.push({ raw, extracted });
+          }
+
+          const data = stripHeavyMediaFromEvaluation(raw);
+          if (data.isDeleted) {
+            deletedIds.push(data.id);
+          } else {
+            remoteList.push(data);
           }
         });
+
+        // Batch-save once instead of inside forEach loop!
+        saveBatchToLocalCache(remoteList, deletedIds);
+
+        // Migrate any legacy embedded Base64 docs in the background if user is authenticated
+        if (legacyToMigrate.length > 0) {
+          const secretCode = getDecodedSecurityCode() || getAdminRawSecurityCode();
+          if (secretCode) {
+            for (const { raw, extracted } of legacyToMigrate) {
+              migrateSingleLegacyDocInBackground(raw, extracted, secretCode).catch(() => {});
+            }
+          }
+        }
 
         // Merge remote with fresh local cache
         const freshLocalCache = Object.values(getLocalCache()).filter(
@@ -767,7 +1524,6 @@ export function subscribeToBuildingEvaluations(
         remoteList.forEach((item) => {
           if (item && item.id && !item.isDeleted) {
             mergedMap.set(item.id, item);
-            saveToLocalCache(item); // Update local cache with remote ground truth
           }
         });
 
@@ -786,45 +1542,144 @@ export function subscribeToBuildingEvaluations(
 }
 
 // ----------------------------------------------------------------------------
-// 3. Fetch All Evaluations for Campus Overview (Public Read Allowed)
+// 3. Fetch All Evaluations for Campus Overview & Maintenance (Lightweight Index First!)
 // ----------------------------------------------------------------------------
 export async function fetchAllEvaluations(): Promise<FixtureEvaluation[]> {
-  try {
-    const querySnapshot = await getDocs(collection(db, EVALUATIONS_COLLECTION));
-    const remoteList: FixtureEvaluation[] = [];
+  return runWithNetworkProgress(
+    {
+      direction: 'download',
+      titleAr: 'جاري تحميل بيانات البلاغات والمرافق (بدون المرفقات الثقيلة)...',
+      detailAr: 'وضع التحميل السريع الموفر للذاكرة (On-Demand Media)',
+      estimatedDurationMs: 1100,
+    },
+    async (updateProgress) => {
+      try {
+        updateProgress(20, 'جاري قراءة الفهرس الخفيف السريع للبلاغات...');
 
-    querySnapshot.forEach((docSnap) => {
-      const data = sanitizeEvaluationRecord(docSnap.data());
-      if (
-        data &&
-        data.id &&
-        data.buildingId &&
-        data.buildingId !== 'CAMPUS_GLOBAL' &&
-        docSnap.id !== 'GLOBAL_CAMPUS_MAP_CONFIG'
-      ) {
-        if (data.isDeleted) {
-          removeFromLocalCache(data.id);
-        } else {
-          remoteList.push(data);
-          saveToLocalCache(data); // Sync local cache
+        // Fast Path: 1 single document read (~30-80 KB, ZERO Base64 attachments!)
+        try {
+          const indexRef = doc(db, EVALUATIONS_COLLECTION, CAMPUS_LIGHT_INDEX_DOC_ID);
+          const indexSnap = await getDoc(indexRef);
+          if (indexSnap.exists()) {
+            const indexData = indexSnap.data();
+            const evaluationsMap = indexData?.evaluationsMap;
+            if (
+              evaluationsMap &&
+              typeof evaluationsMap === 'object' &&
+              Object.keys(evaluationsMap).length > 0
+            ) {
+              updateProgress(75, 'تم جلب الفهرس السريع، جاري تحديث الواجهة...');
+              const remoteList: FixtureEvaluation[] = [];
+              const deletedIds: string[] = [];
+
+              for (const rawItem of Object.values(evaluationsMap)) {
+                const item = stripHeavyMediaFromEvaluation(rawItem);
+                if (
+                  item &&
+                  item.id &&
+                  item.buildingId &&
+                  !item.id.startsWith(MEDIA_DOC_PREFIX) &&
+                  item.buildingId !== 'MEDIA_VAULT' &&
+                  item.buildingId !== 'CAMPUS_GLOBAL'
+                ) {
+                  if (item.isDeleted) {
+                    deletedIds.push(item.id);
+                  } else {
+                    remoteList.push(item);
+                  }
+                }
+              }
+
+              saveBatchToLocalCache(remoteList, deletedIds);
+
+              const localMap = getLocalCache();
+              const mergedMap = new Map<string, FixtureEvaluation>();
+              Object.values(localMap).forEach((item) => {
+                if (item && item.id && !item.isDeleted) mergedMap.set(item.id, item);
+              });
+              remoteList.forEach((item) => {
+                if (item && item.id && !item.isDeleted) mergedMap.set(item.id, item);
+              });
+
+              updateProgress(96, 'اكتملت مزامنة بيانات البلاغات بنجاح');
+              return Array.from(mergedMap.values());
+            }
+          }
+        } catch (fastPathErr) {
+          console.warn('[HostelsEval] Fast light index read fallback:', fastPathErr);
         }
+
+        // Fallback Path (first run before light index is built): read collection & immediately strip heavy Base64
+        updateProgress(40, 'جاري تجهيز الفهرس الخفيف وتجريد المرفقات الثقيلة...');
+        const querySnapshot = await getDocs(collection(db, EVALUATIONS_COLLECTION));
+        const remoteList: FixtureEvaluation[] = [];
+        const deletedIds: string[] = [];
+        const legacyToMigrate: Array<{ raw: any; extracted: FacilityMediaVaultDoc }> = [];
+
+        querySnapshot.forEach((docSnap) => {
+          if (
+            docSnap.id.startsWith(MEDIA_DOC_PREFIX) ||
+            docSnap.id === CAMPUS_MAP_CONFIG_DOC_ID ||
+            docSnap.id === CAMPUS_LIGHT_INDEX_DOC_ID ||
+            docSnap.id === '_connection_test_probe'
+          ) {
+            return;
+          }
+          const raw = docSnap.data();
+          if (
+            !raw ||
+            !raw.id ||
+            !raw.buildingId ||
+            raw.buildingId === 'CAMPUS_GLOBAL' ||
+            raw.buildingId === 'MEDIA_VAULT'
+          ) {
+            return;
+          }
+
+          const extracted = extractMediaVaultFromEvaluation(raw);
+          if (extracted) {
+            legacyToMigrate.push({ raw, extracted });
+          }
+
+          const stripped = stripHeavyMediaFromEvaluation(raw);
+          if (stripped.isDeleted) {
+            deletedIds.push(stripped.id);
+          } else {
+            remoteList.push(stripped);
+          }
+        });
+
+        updateProgress(85, 'جاري حفظ الفهرس الخفيف في ذاكرة الجهاز...');
+        // Single batch write to localStorage instead of N writes inside forEach!
+        saveBatchToLocalCache(remoteList, deletedIds);
+
+        const localMap = getLocalCache();
+        const mergedMap = new Map<string, FixtureEvaluation>();
+        Object.values(localMap).forEach((item) => {
+          if (item && item.id && !item.isDeleted) mergedMap.set(item.id, item);
+        });
+        remoteList.forEach((item) => {
+          if (item && item.id && !item.isDeleted) mergedMap.set(item.id, item);
+        });
+
+        const mergedResult = Array.from(mergedMap.values());
+
+        // Automatically build GLOBAL_CAMPUS_LIGHT_INDEX & migrate legacy embedded Base64 in background if authenticated
+        const secretCode = getDecodedSecurityCode() || getAdminRawSecurityCode();
+        if (secretCode && mergedResult.length > 0) {
+          buildLightIndexAndMigrateLegacyDocs(mergedResult, legacyToMigrate, secretCode).catch(
+            () => {}
+          );
+        }
+
+        updateProgress(96, 'اكتملت المزامنة وتجهيز البلاغات');
+        return mergedResult;
+      } catch (err) {
+        console.warn('Firestore fetch failed, returning local cache:', err);
+        return Object.values(getLocalCache()).filter((item) => !item?.isDeleted);
       }
-    });
-
-    const localMap = getLocalCache();
-    const mergedMap = new Map<string, FixtureEvaluation>();
-    Object.values(localMap).forEach((item) => {
-      if (item && item.id && !item.isDeleted) mergedMap.set(item.id, item);
-    });
-    remoteList.forEach((item) => {
-      if (item && item.id && !item.isDeleted) mergedMap.set(item.id, item);
-    });
-
-    return Array.from(mergedMap.values());
-  } catch (err) {
-    console.warn('Firestore fetch failed, returning local cache:', err);
-    return Object.values(getLocalCache()).filter((item) => !item?.isDeleted);
-  }
+    }
+  );
 }
 
 // ----------------------------------------------------------------------------
@@ -837,37 +1692,97 @@ export async function syncAllEvaluationsToFirestore(
   const itemsToSync =
     evaluations && evaluations.length > 0 ? evaluations : getAllCachedEvaluations();
 
-  let synced = 0;
-  let failed = 0;
-  let firstError: string | undefined;
+  return runWithNetworkProgress(
+    {
+      direction: 'upload',
+      titleAr: 'جاري مزامنة كافة السجلات والفهرس السريع مع السحابة...',
+      detailAr: `إجمالي السجلات: ${itemsToSync.length}`,
+      estimatedDurationMs: Math.max(1500, itemsToSync.length * 35),
+    },
+    async (updateProgress) => {
+      let synced = 0;
+      let failed = 0;
+      let firstError: string | undefined;
+      const evaluationsMap: Record<string, FixtureEvaluation> = {};
 
-  for (const item of itemsToSync) {
-    try {
-      const docRef = doc(db, EVALUATIONS_COLLECTION, item.id);
-      const rawPayload: Record<string, any> = {
-        ...item,
-        updatedAt: new Date().toISOString(),
+      for (let i = 0; i < itemsToSync.length; i++) {
+        const item = itemsToSync[i];
+        if (
+          !item ||
+          !item.id ||
+          item.id.startsWith(MEDIA_DOC_PREFIX) ||
+          item.id === CAMPUS_LIGHT_INDEX_DOC_ID ||
+          item.buildingId === 'MEDIA_VAULT' ||
+          item.buildingId === 'CAMPUS_GLOBAL'
+        ) {
+          continue;
+        }
+
+        const pct = Math.min(90, Math.round(((i + 1) / Math.max(1, itemsToSync.length)) * 85));
+        updateProgress(pct, `جاري رفع السجل (${i + 1} / ${itemsToSync.length}): ${item.id}`);
+
+        try {
+          const extracted = extractMediaVaultFromEvaluation(item);
+          if (extracted && secretCode) {
+            const mediaRef = doc(db, EVALUATIONS_COLLECTION, `${MEDIA_DOC_PREFIX}${item.id}`);
+            await setDoc(
+              mediaRef,
+              stripUndefinedValues({
+                ...extracted,
+                secretCode,
+                updatedAt: new Date().toISOString(),
+              }),
+              { merge: true }
+            );
+          }
+
+          const stripped = stripHeavyMediaFromEvaluation(item);
+          const docRef = doc(db, EVALUATIONS_COLLECTION, stripped.id);
+          const rawPayload: Record<string, any> = {
+            ...stripped,
+            updatedAt: new Date().toISOString(),
+          };
+          if (secretCode) {
+            rawPayload.secretCode = secretCode;
+          }
+          const cleanPayload = stripUndefinedValues(rawPayload);
+          await setDoc(docRef, cleanPayload);
+          evaluationsMap[stripped.id] = toCompactIndexEntry(stripped);
+          synced++;
+        } catch (err: any) {
+          failed++;
+          if (!firstError) {
+            firstError = `${err?.code || 'ERROR'}: ${err?.message || 'Permission denied'}`;
+          }
+        }
+      }
+
+      if (secretCode && Object.keys(evaluationsMap).length > 0) {
+        try {
+          updateProgress(94, 'جاري تحديث الفهرس السريع للمجمع...');
+          const indexRef = doc(db, EVALUATIONS_COLLECTION, CAMPUS_LIGHT_INDEX_DOC_ID);
+          await setDoc(
+            indexRef,
+            stripUndefinedValues({
+              id: CAMPUS_LIGHT_INDEX_DOC_ID,
+              buildingId: 'CAMPUS_GLOBAL',
+              secretCode,
+              updatedAt: new Date().toISOString(),
+              evaluationsMap,
+            }),
+            { merge: true }
+          );
+        } catch {}
+      }
+
+      return {
+        total: itemsToSync.length,
+        synced,
+        failed,
+        firstError,
       };
-      if (secretCode) {
-        rawPayload.secretCode = secretCode;
-      }
-      const cleanPayload = stripUndefinedValues(rawPayload);
-      await setDoc(docRef, cleanPayload, { merge: true });
-      synced++;
-    } catch (err: any) {
-      failed++;
-      if (!firstError) {
-        firstError = `${err?.code || 'ERROR'}: ${err?.message || 'Permission denied'}`;
-      }
     }
-  }
-
-  return {
-    total: itemsToSync.length,
-    synced,
-    failed,
-    firstError,
-  };
+  );
 }
 
 // ----------------------------------------------------------------------------
@@ -1011,6 +1926,26 @@ export function getBuildingTimeline(buildingId?: string): EvaluationHistoryEntry
     const localEntries: EvaluationHistoryEntry[] = raw ? JSON.parse(raw) : [];
     const safeLocal = Array.isArray(localEntries) ? localEntries : [];
 
+    // Strip any legacy Base64 from local timeline storage automatically to free localStorage & RAM
+    let timelineHadBase64 = false;
+    const strippedLocal = safeLocal.map((entry) => {
+      if (!entry || typeof entry !== 'object') return entry;
+      if (entry.photoBase64 || (Array.isArray(entry.media) && entry.media.length > 0)) {
+        timelineHadBase64 = true;
+        const copy = { ...entry };
+        copy.hasPhoto = true;
+        delete copy.photoBase64;
+        delete copy.media;
+        return copy;
+      }
+      return entry;
+    });
+    if (timelineHadBase64) {
+      try {
+        localStorage.setItem(TIMELINE_STORAGE_KEY, JSON.stringify(strippedLocal));
+      } catch {}
+    }
+
     // Also collect cloud-synced per-facility history from cached evaluations
     const allEvals = getAllCachedEvaluations();
     const cloudHistoryEntries: EvaluationHistoryEntry[] = [];
@@ -1021,7 +1956,6 @@ export function getBuildingTimeline(buildingId?: string): EvaluationHistoryEntry
       }
       if (Array.isArray(ev.history) && ev.history.length > 0) {
         for (const h of ev.history) {
-          const primaryImg = h.media?.find((m) => m.type === 'image')?.url;
           cloudHistoryEntries.push({
             id: h.id,
             fixtureId: ev.id,
@@ -1035,8 +1969,8 @@ export function getBuildingTimeline(buildingId?: string): EvaluationHistoryEntry
             defects: h.defects || [],
             notes: h.notes,
             rating: h.evaluationRating || ev.rating,
-            photoBase64: primaryImg || ev.photoBase64,
-            media: h.media,
+            hasPhoto: Boolean(h.hasMedia || ev.hasPhoto),
+            mediaMeta: h.mediaMeta || ev.mediaMeta,
             maximoNumber: h.maximoNumber || ev.maintenanceTicket?.maximoNumber,
             ticketStatus: ev.maintenanceTicket?.status,
             inspectorName: h.actorName,
@@ -1057,8 +1991,8 @@ export function getBuildingTimeline(buildingId?: string): EvaluationHistoryEntry
     }
 
     const filteredLocal = buildingId
-      ? safeLocal.filter((e) => e.buildingId.toUpperCase() === buildingId.toUpperCase())
-      : safeLocal;
+      ? strippedLocal.filter((e) => e.buildingId.toUpperCase() === buildingId.toUpperCase())
+      : strippedLocal;
 
     const mergedMap = new Map<string, EvaluationHistoryEntry>();
     for (const item of filteredLocal) {
@@ -1079,15 +2013,24 @@ export function getBuildingTimeline(buildingId?: string): EvaluationHistoryEntry
 
 export function recordEvaluationHistory(entry: EvaluationHistoryEntry): void {
   try {
+    const slimEntry: EvaluationHistoryEntry = {
+      ...entry,
+      hasPhoto: Boolean(
+        entry.hasPhoto || entry.photoBase64 || (entry.media && entry.media.length > 0)
+      ),
+    };
+    delete slimEntry.photoBase64;
+    delete slimEntry.media;
+
     const current = getBuildingTimeline();
-    // Keep most recent first (up to 500 records)
-    const updated = [entry, ...current].slice(0, 500);
+    // Keep most recent first (up to 300 lightweight records)
+    const updated = [slimEntry, ...current].slice(0, 300);
     localStorage.setItem(TIMELINE_STORAGE_KEY, JSON.stringify(updated));
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
         new CustomEvent('hostels_timeline_updated', {
-          detail: { entry, buildingId: entry.buildingId },
+          detail: { entry: slimEntry, buildingId: slimEntry.buildingId },
         })
       );
     }
@@ -1182,6 +2125,7 @@ export async function resetBuildingEvaluations(
 
   // 3. Update local cache immediately
   try {
+    memoryEvalCache = remaining;
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(remaining));
   } catch (err) {
     console.warn('Failed to update local cache during reset:', err);
@@ -1203,7 +2147,9 @@ export async function resetBuildingEvaluations(
   if (secretCode && idList.length > 0) {
     await Promise.all(
       idList.map(async (id) => {
+        mediaVaultLruCache.delete(id);
         const docRef = doc(db, EVALUATIONS_COLLECTION, id);
+        const mediaRef = doc(db, EVALUATIONS_COLLECTION, `${MEDIA_DOC_PREFIX}${id}`);
 
         // A. Write tombstone with secretCode so standard write rules pass 100%
         try {
@@ -1222,14 +2168,36 @@ export async function resetBuildingEvaluations(
           console.warn(`[Firestore] Tombstone write failed for ${id}:`, err);
         }
 
-        // B. Also attempt hard delete in case Firestore security rules permit delete
+        // B. Also attempt hard delete on both main doc and media vault doc
         try {
           await deleteDoc(docRef);
-        } catch {
-          // If deleteDoc is rejected by rules, the tombstone with isDeleted: true guarantees removal!
-        }
+        } catch {}
+        try {
+          await deleteDoc(mediaRef);
+        } catch {}
       })
     );
+
+    // Update GLOBAL_CAMPUS_LIGHT_INDEX with remaining items
+    try {
+      const evaluationsMap: Record<string, FixtureEvaluation> = {};
+      for (const item of Object.values(remaining)) {
+        if (item && item.id && !item.isDeleted) {
+          evaluationsMap[item.id] = toCompactIndexEntry(item);
+        }
+      }
+      const indexRef = doc(db, EVALUATIONS_COLLECTION, CAMPUS_LIGHT_INDEX_DOC_ID);
+      await setDoc(
+        indexRef,
+        stripUndefinedValues({
+          id: CAMPUS_LIGHT_INDEX_DOC_ID,
+          buildingId: 'CAMPUS_GLOBAL',
+          secretCode,
+          updatedAt: new Date().toISOString(),
+          evaluationsMap,
+        })
+      );
+    } catch {}
   }
 
   const finalClearedCount = Math.max(localClearedCount, idList.length);

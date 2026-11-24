@@ -892,6 +892,11 @@ input:focus, textarea:focus, select:focus {
 .focus\:border-rose-500:focus { border-color: #f43f5e; }
 .focus\:outline-none:focus { outline: none; }
 
+.bottom-16 { bottom: 4rem; }
+.bg-slate-800 { background-color: #1e293b; }
+.duration-150 { transition-duration: 150ms; }
+.transition-all { transition-property: all; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); transition-duration: 150ms; }
+
 /* Responsive Additions */
 @media (min-width: 640px) {
   .sm\:inline { display: inline; }
@@ -899,11 +904,15 @@ input:focus, textarea:focus, select:focus {
   .sm\:justify-end { justify-content: flex-end; }
   .sm\:gap-4 { gap: 1rem; }
   .sm\:w-48 { width: 12rem; }
+  .sm\:w-96 { width: 24rem; }
+  .sm\:left-6 { left: 1.5rem; }
+  .sm\:right-auto { right: auto; }
   .sm\:text-xl { font-size: 1.25rem; line-height: 1.75rem; }
   .sm\:text-4xl { font-size: 2.25rem; line-height: 2.5rem; }
 }
 @media (min-width: 768px) {
   .md\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .md\:bottom-5 { bottom: 1.25rem; }
 }
 @media (min-width: 1024px) {
   .lg\:flex-row { flex-direction: row; }

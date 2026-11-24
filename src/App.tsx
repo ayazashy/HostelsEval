@@ -12,6 +12,7 @@ import {
 } from './types/hostel';
 import { DEFAULT_BUILDINGS } from './config/buildings';
 import { Navbar, AppViewMode } from './components/Common/Navbar';
+import { NetworkProgressPopup } from './components/Common/NetworkProgressPopup';
 import { CampusOverview } from './components/Dashboard/CampusOverview';
 import { BuildingDetail } from './components/Dashboard/BuildingDetail';
 import { LeadersKPIDashboard } from './components/Dashboard/LeadersKPIDashboard';
@@ -245,6 +246,7 @@ export function App() {
     setMaintenanceAuth(null);
     setShowLoginModal(false);
     handleNavigate('admin_panel', true);
+    loadAllEvaluations();
   };
 
   const handleLeaderLogin = (leaderAuth: BuildingLeaderAuth) => {
@@ -254,6 +256,7 @@ export function App() {
     setShowLoginModal(false);
     handleSelectBuilding(leaderAuth.buildingId);
     handleNavigate('leader_portal', true);
+    loadAllEvaluations();
   };
 
   const handleMaintenanceLogin = (mAuth: MaintenanceAuth) => {
@@ -262,6 +265,7 @@ export function App() {
     setMaintenanceAuth(mAuth);
     setShowLoginModal(false);
     handleNavigate(mAuth.role === 'viewer' ? 'leaders_kpi' : 'maintenance_portal', true);
+    loadAllEvaluations();
   };
 
   const handleImpersonate = (impersonatedAuth: BuildingLeaderAuth) => {
@@ -488,6 +492,9 @@ export function App() {
           onClose={() => setShowLoginModal(false)}
         />
       )}
+
+      {/* Animated Download/Upload Network Progress Bar Popup */}
+      <NetworkProgressPopup />
     </div>
   );
 }

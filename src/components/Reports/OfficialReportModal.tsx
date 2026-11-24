@@ -5,8 +5,9 @@
 import React, { useState } from 'react';
 import { BuildingInfo, FixtureEvaluation } from '../../types/hostel';
 import { computeCampusStats } from '../../utils/healthScore';
+import { fetchFacilityMediaOnDemand } from '../../services/firestoreService';
 import { ImageViewerModal } from '../Common/ImageViewerModal';
-import { Printer, X, ShieldCheck, AlertTriangle, Maximize2, FileText } from 'lucide-react';
+import { Printer, X, ShieldCheck, AlertTriangle, Maximize2, FileText, Eye } from 'lucide-react';
 
 interface OfficialReportModalProps {
   buildings: BuildingInfo[];
@@ -22,6 +23,32 @@ export const OfficialReportModal: React.FC<OfficialReportModalProps> = ({
   onClose,
 }) => {
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+  const [loadedReportPhotos, setLoadedReportPhotos] = useState<Record<string, string>>({});
+  const [loadingPhotoId, setLoadingPhotoId] = useState<string | null>(null);
+
+  const handleLoadReportPhoto = async (item: FixtureEvaluation) => {
+    const existing = loadedReportPhotos[item.id] || item.photoBase64;
+    if (existing) {
+      setSelectedPhoto(existing);
+      return;
+    }
+    if (!item.hasPhoto && !(item.mediaCount && item.mediaCount > 0)) return;
+
+    setLoadingPhotoId(item.id);
+    try {
+      const vault = await fetchFacilityMediaOnDemand(item.id);
+      const url =
+        vault?.photoBase64 ||
+        vault?.media?.find((m) => m.type === 'image')?.url ||
+        vault?.closurePhotoBase64;
+      if (url) {
+        setLoadedReportPhotos((prev) => ({ ...prev, [item.id]: url }));
+        setSelectedPhoto(url);
+      }
+    } finally {
+      setLoadingPhotoId(null);
+    }
+  };
 
   const visibleBuildings = scopedBuildingId
     ? buildings.filter((b) => b.id.toUpperCase() === scopedBuildingId.toUpperCase())
@@ -201,41 +228,56 @@ export const OfficialReportModal: React.FC<OfficialReportModalProps> = ({
                 نماذج من التوثيق الميداني بالصور والأرقام الفريدة:
               </h3>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {criticalItems.map((item) => (
-                  <div
-                    key={item.id}
-                    onClick={() => item.photoBase64 && setSelectedPhoto(item.photoBase64)}
-                    className={`border border-slate-200 rounded-xl overflow-hidden bg-white shadow-xs ${
-                      item.photoBase64 ? 'cursor-pointer group hover:shadow-md transition' : ''
-                    }`}
-                  >
-                    {item.photoBase64 ? (
-                      <div className="relative w-full h-24 overflow-hidden bg-slate-100">
-                        <img
-                          src={item.photoBase64}
-                          alt={item.id}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                        />
-                        <div className="absolute bottom-1 right-1 bg-black/60 backdrop-blur-xs text-white p-1 rounded-md pointer-events-none transition group-hover:bg-blue-600">
-                          <Maximize2 className="w-3 h-3" />
+                {criticalItems.map((item) => {
+                  const photoUrl = loadedReportPhotos[item.id] || item.photoBase64;
+                  const itemHasPhoto = Boolean(
+                    photoUrl || item.hasPhoto || (item.mediaCount && item.mediaCount > 0)
+                  );
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => itemHasPhoto && handleLoadReportPhoto(item)}
+                      className={`border border-slate-200 rounded-xl overflow-hidden bg-white shadow-xs ${
+                        itemHasPhoto ? 'cursor-pointer group hover:shadow-md transition' : ''
+                      }`}
+                    >
+                      {photoUrl ? (
+                        <div className="relative w-full h-24 overflow-hidden bg-slate-100">
+                          <img
+                            src={photoUrl}
+                            alt={item.id}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                          />
+                          <div className="absolute bottom-1 right-1 bg-black/60 backdrop-blur-xs text-white p-1 rounded-md pointer-events-none transition group-hover:bg-blue-600">
+                            <Maximize2 className="w-3 h-3" />
+                          </div>
+                        </div>
+                      ) : itemHasPhoto ? (
+                        <div className="w-full h-24 bg-blue-50/60 hover:bg-blue-50 flex flex-col items-center justify-center gap-1 text-[10px] text-blue-700 font-bold px-2 text-center">
+                          <Eye className="w-4 h-4 text-blue-600" />
+                          <span>
+                            {loadingPhotoId === item.id
+                              ? 'جاري تحميل الصورة...'
+                              : 'اضغط لتحميل ومعاينة الصورة'}
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="w-full h-24 bg-slate-50 flex flex-col items-center justify-center gap-1 text-[10px] text-slate-400">
+                          <FileText className="w-4 h-4 text-slate-300" />
+                          <span>سجل رقمي</span>
+                        </div>
+                      )}
+                      <div className="p-2 text-[10px] border-t border-slate-100">
+                        <div className="font-mono font-bold text-blue-700 truncate">
+                          {item.id}
+                        </div>
+                        <div className="text-slate-500 truncate mt-0.5">
+                          {item.defects.join('، ') || 'خلل تشغيلي'}
                         </div>
                       </div>
-                    ) : (
-                      <div className="w-full h-24 bg-slate-50 flex flex-col items-center justify-center gap-1 text-[10px] text-slate-400">
-                        <FileText className="w-4 h-4 text-slate-300" />
-                        <span>سجل رقمي</span>
-                      </div>
-                    )}
-                    <div className="p-2 text-[10px] border-t border-slate-100">
-                      <div className="font-mono font-bold text-blue-700 truncate">
-                        {item.id}
-                      </div>
-                      <div className="text-slate-500 truncate mt-0.5">
-                        {item.defects.join('، ') || 'خلل تشغيلي'}
-                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 

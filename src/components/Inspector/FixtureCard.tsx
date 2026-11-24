@@ -10,6 +10,7 @@ import {
   FixtureTemplate,
   FacilityCategoryCode,
   FacilityMediaItem,
+  FacilityMediaVaultDoc,
   FacilityHistoryEvent,
 } from '../../types/hostel';
 import {
@@ -24,6 +25,7 @@ import {
   CloudSaveResult,
   appendFacilityChatMessage,
   evaluateClosedTicket,
+  fetchFacilityMediaOnDemand,
 } from '../../services/firestoreService';
 import { ImageViewerModal } from '../Common/ImageViewerModal';
 import {
@@ -47,6 +49,8 @@ import {
   ExternalLink,
   Copy,
   RotateCcw,
+  Eye,
+  Download,
   X,
 } from 'lucide-react';
 
@@ -136,6 +140,79 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
   const [showRejectInput, setShowRejectInput] = useState<boolean>(false);
   const [chatKsuConfirmed, setChatKsuConfirmed] = useState<boolean>(false);
   const [copiedMaximo, setCopiedMaximo] = useState<boolean>(false);
+
+  // On-Demand Media Vault State (so images are only downloaded when touched)
+  const [loadedVault, setLoadedVault] = useState<FacilityMediaVaultDoc | null>(null);
+  const [isLoadingOnDemandMedia, setIsLoadingOnDemandMedia] = useState<boolean>(false);
+
+  const handleFetchAndPreviewMedia = async (
+    target: 'before' | 'after' | 'maximo' | 'chat' | 'populate_list' = 'before',
+    historyEventId?: string
+  ) => {
+    setIsLoadingOnDemandMedia(true);
+    try {
+      let vault = loadedVault;
+      if (!vault) {
+        vault = await fetchFacilityMediaOnDemand(fixtureId);
+        if (vault) {
+          setLoadedVault(vault);
+          if (vault.media && vault.media.length > 0 && mediaList.length === 0) {
+            setMediaList(vault.media);
+          } else if (vault.photoBase64 && mediaList.length === 0) {
+            setMediaList([
+              {
+                id: 'vault_photo',
+                type: 'image',
+                url: vault.photoBase64,
+                capturedAt: vault.updatedAt,
+              },
+            ]);
+          }
+        }
+      }
+
+      if (!vault) return;
+
+      if (target === 'before') {
+        const imgUrl =
+          vault.photoBase64 ||
+          vault.media?.find((m) => m.type === 'image')?.url ||
+          existingEvaluation?.photoBase64;
+        if (imgUrl) setPreviewImage(imgUrl);
+      } else if (target === 'after') {
+        const afterUrl =
+          vault.closurePhotoBase64 || existingEvaluation?.maintenanceTicket?.closurePhotoBase64;
+        if (afterUrl) setPreviewImage(afterUrl);
+      } else if (target === 'maximo') {
+        const maxUrl =
+          vault.maximoAttachmentBase64 ||
+          existingEvaluation?.maintenanceTicket?.maximoAttachmentBase64;
+        const maxType =
+          vault.maximoAttachmentType ||
+          existingEvaluation?.maintenanceTicket?.maximoAttachmentType;
+        const maxName =
+          vault.maximoAttachmentName ||
+          existingEvaluation?.maintenanceTicket?.maximoAttachmentName ||
+          `Maximo_${existingEvaluation?.maintenanceTicket?.maximoNumber || fixtureId}.pdf`;
+        if (maxUrl) {
+          if (maxType === 'pdf' || maxUrl.startsWith('data:application/pdf')) {
+            const a = document.createElement('a');
+            a.href = maxUrl;
+            a.download = maxName;
+            a.click();
+          } else {
+            setPreviewImage(maxUrl);
+          }
+        }
+      } else if (target === 'chat' && historyEventId) {
+        const evMedia = vault.historyMediaById?.[historyEventId];
+        const firstImg = evMedia?.find((m) => m.type === 'image')?.url || vault.photoBase64;
+        if (firstImg) setPreviewImage(firstImg);
+      }
+    } finally {
+      setIsLoadingOnDemandMedia(false);
+    }
+  };
 
   useEffect(() => {
     if (existingEvaluation) {
@@ -613,8 +690,13 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
         </div>
       </div>
 
-      {/* Summary of Active Defects & Media Thumbnails when collapsed */}
-      {!isExpanded && (selectedDefects.length > 0 || mediaList.length > 0 || notes) && (
+      {/* Summary of Active Defects & On-Demand Media Button when collapsed */}
+      {!isExpanded &&
+        (selectedDefects.length > 0 ||
+          mediaList.length > 0 ||
+          existingEvaluation?.hasPhoto ||
+          (existingEvaluation?.mediaCount || 0) > 0 ||
+          notes) && (
         <div className="flex flex-col gap-2 bg-white/80 p-2.5 rounded-xl border border-slate-200/80">
           {selectedDefects.length > 0 && (
             <div className="flex flex-wrap gap-1">
@@ -634,7 +716,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
 
           {notes && <p className="text-xs text-slate-600 line-clamp-2">ملاحظة: {notes}</p>}
 
-          {mediaList.length > 0 && (
+          {mediaList.length > 0 ? (
             <div className="flex items-center gap-2 overflow-x-auto pb-1">
               {mediaList.map((item) => (
                 <div
@@ -663,6 +745,22 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                 </div>
               ))}
             </div>
+          ) : (
+            (existingEvaluation?.hasPhoto || (existingEvaluation?.mediaCount || 0) > 0) && (
+              <button
+                type="button"
+                disabled={isLoadingOnDemandMedia}
+                onClick={() => handleFetchAndPreviewMedia('before')}
+                className="self-start px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-800 text-[11px] font-bold inline-flex items-center gap-1.5 transition"
+              >
+                <Eye className="w-3.5 h-3.5 text-blue-600" />
+                <span>
+                  {isLoadingOnDemandMedia
+                    ? 'جاري تحميل الصورة...'
+                    : `معاينة الصور المرفقة (${existingEvaluation?.mediaCount || 1}) — تُحمّل عند الطلب`}
+                </span>
+              </button>
+            )
           )}
         </div>
       )}
@@ -959,20 +1057,39 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                     </span>
                   </div>
 
-                  {/* Side-by-Side Before & After Images when closed by Technician */}
-                  {(existingEvaluation?.photoBase64 || ticket.closurePhotoBase64) && (
+                  {/* Side-by-Side Before & After Images when closed by Technician (On-Demand) */}
+                  {(existingEvaluation?.hasPhoto ||
+                    existingEvaluation?.photoBase64 ||
+                    ticket.hasClosurePhoto ||
+                    ticket.closurePhotoBase64) && (
                     <div className="grid grid-cols-2 gap-2 pt-1">
                       <div className="bg-slate-50 border border-slate-200 rounded-xl p-2 flex flex-col gap-1">
                         <span className="text-[10px] font-bold text-rose-700">
                           صورة البلاغ (قبل الإصلاح):
                         </span>
-                        {existingEvaluation?.photoBase64 ? (
+                        {loadedVault?.photoBase64 || existingEvaluation?.photoBase64 ? (
                           <img
-                            src={existingEvaluation.photoBase64}
+                            src={loadedVault?.photoBase64 || existingEvaluation?.photoBase64}
                             alt="قبل"
-                            onClick={() => setPreviewImage(existingEvaluation.photoBase64 || null)}
+                            onClick={() =>
+                              setPreviewImage(
+                                loadedVault?.photoBase64 || existingEvaluation?.photoBase64 || null
+                              )
+                            }
                             className="w-full h-24 object-cover rounded-lg cursor-pointer border border-slate-200"
                           />
+                        ) : existingEvaluation?.hasPhoto ? (
+                          <button
+                            type="button"
+                            disabled={isLoadingOnDemandMedia}
+                            onClick={() => handleFetchAndPreviewMedia('before')}
+                            className="h-24 rounded-lg border border-dashed border-slate-300 bg-white hover:bg-slate-100 flex flex-col items-center justify-center gap-1 text-[11px] font-bold text-blue-700 transition"
+                          >
+                            <Eye className="w-4 h-4" />
+                            <span>
+                              {isLoadingOnDemandMedia ? 'جاري التحميل...' : 'اضغط لعرض صورة قبل'}
+                            </span>
+                          </button>
                         ) : (
                           <div className="h-24 flex items-center justify-center text-[10px] text-slate-400">
                             بدون صورة قبل
@@ -984,13 +1101,29 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                         <span className="text-[10px] font-bold text-emerald-800">
                           صورة الفني (بعد الإصلاح):
                         </span>
-                        {ticket.closurePhotoBase64 ? (
+                        {loadedVault?.closurePhotoBase64 || ticket.closurePhotoBase64 ? (
                           <img
-                            src={ticket.closurePhotoBase64}
+                            src={loadedVault?.closurePhotoBase64 || ticket.closurePhotoBase64}
                             alt="بعد"
-                            onClick={() => setPreviewImage(ticket.closurePhotoBase64 || null)}
+                            onClick={() =>
+                              setPreviewImage(
+                                loadedVault?.closurePhotoBase64 || ticket.closurePhotoBase64 || null
+                              )
+                            }
                             className="w-full h-24 object-cover rounded-lg cursor-pointer border border-emerald-300"
                           />
+                        ) : ticket.hasClosurePhoto ? (
+                          <button
+                            type="button"
+                            disabled={isLoadingOnDemandMedia}
+                            onClick={() => handleFetchAndPreviewMedia('after')}
+                            className="h-24 rounded-lg border border-dashed border-emerald-300 bg-white hover:bg-emerald-50 flex flex-col items-center justify-center gap-1 text-[11px] font-bold text-emerald-700 transition"
+                          >
+                            <Eye className="w-4 h-4" />
+                            <span>
+                              {isLoadingOnDemandMedia ? 'جاري التحميل...' : 'اضغط لعرض صورة الإصلاح'}
+                            </span>
+                          </button>
                         ) : (
                           <div className="h-24 flex items-center justify-center text-[10px] text-slate-400">
                             بانتظار صورة الإصلاح
@@ -1001,7 +1134,10 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                   )}
 
                   {/* Linked Maximo Ticket Info (Number + Direct Link + Attachment) */}
-                  {(ticket.maximoNumber || ticket.maximoUrl || ticket.maximoAttachmentBase64) && (
+                  {(ticket.maximoNumber ||
+                    ticket.maximoUrl ||
+                    ticket.hasMaximoAttachment ||
+                    ticket.maximoAttachmentBase64) && (
                     <div className="flex flex-wrap items-center gap-2 bg-blue-50/70 border border-blue-200 rounded-xl p-2.5">
                       {ticket.maximoNumber && (
                         <button
@@ -1035,29 +1171,25 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                         </a>
                       )}
 
-                      {ticket.maximoAttachmentBase64 && (
-                        ticket.maximoAttachmentType === 'pdf' ? (
-                          <a
-                            href={ticket.maximoAttachmentBase64}
-                            download={
-                              ticket.maximoAttachmentName ||
-                              `Maximo_${ticket.maximoNumber || 'ticket'}.pdf`
-                            }
-                            className="px-2.5 py-1 rounded-lg bg-white border border-blue-200 text-blue-700 font-bold text-[11px] inline-flex items-center gap-1"
-                          >
-                            <FileText className="w-3 h-3 text-rose-600" />
-                            <span>ملف البلاغ (PDF)</span>
-                          </a>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => setPreviewImage(ticket.maximoAttachmentBase64 || null)}
-                            className="px-2.5 py-1 rounded-lg bg-white border border-blue-200 text-blue-700 font-bold text-[11px] inline-flex items-center gap-1"
-                          >
-                            <ImageIcon className="w-3 h-3 text-blue-600" />
-                            <span>مرفق البلاغ</span>
-                          </button>
-                        )
+                      {(ticket.hasMaximoAttachment || ticket.maximoAttachmentBase64) && (
+                        <button
+                          type="button"
+                          disabled={isLoadingOnDemandMedia}
+                          onClick={() => handleFetchAndPreviewMedia('maximo')}
+                          className="px-2.5 py-1 rounded-lg bg-white border border-blue-200 text-blue-700 font-bold text-[11px] inline-flex items-center gap-1"
+                        >
+                          {ticket.maximoAttachmentType === 'pdf' ? (
+                            <>
+                              <FileText className="w-3 h-3 text-rose-600" />
+                              <span>تحميل ملف البلاغ (PDF)</span>
+                            </>
+                          ) : (
+                            <>
+                              <ImageIcon className="w-3 h-3 text-blue-600" />
+                              <span>معاينة مرفق البلاغ (عند الطلب)</span>
+                            </>
+                          )}
+                        </button>
                       )}
                     </div>
                   )}
@@ -1278,23 +1410,39 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                           </p>
                         )}
 
-                        {ev.media && ev.media.length > 0 && (
+                        {(ev.hasMedia || (ev.media && ev.media.length > 0)) && (
                           <div className="flex items-center gap-2 overflow-x-auto pt-1">
-                            {ev.media.map((m) => (
-                              <div
-                                key={m.id}
-                                onClick={() => m.type === 'image' && setPreviewImage(m.url)}
-                                className="w-16 h-16 rounded-xl overflow-hidden border border-slate-300 bg-white shrink-0 cursor-pointer"
+                            {ev.media && ev.media.length > 0 ? (
+                              ev.media.map((m) => (
+                                <div
+                                  key={m.id}
+                                  onClick={() => m.type === 'image' && setPreviewImage(m.url)}
+                                  className="w-16 h-16 rounded-xl overflow-hidden border border-slate-300 bg-white shrink-0 cursor-pointer"
+                                >
+                                  {m.type === 'image' ? (
+                                    <img src={m.url} alt="" className="w-full h-full object-cover" />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-[9px] font-bold">
+                                      {m.type.toUpperCase()}
+                                    </div>
+                                  )}
+                                </div>
+                              ))
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={isLoadingOnDemandMedia}
+                                onClick={() => handleFetchAndPreviewMedia('chat', ev.id)}
+                                className="px-2.5 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-800 text-[11px] font-bold inline-flex items-center gap-1.5 transition"
                               >
-                                {m.type === 'image' ? (
-                                  <img src={m.url} alt="" className="w-full h-full object-cover" />
-                                ) : (
-                                  <div className="w-full h-full flex items-center justify-center text-[9px] font-bold">
-                                    {m.type.toUpperCase()}
-                                  </div>
-                                )}
-                              </div>
-                            ))}
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>
+                                  {isLoadingOnDemandMedia
+                                    ? 'جاري التحميل...'
+                                    : 'عرض الصورة المرفقة (تُحمّل عند الطلب)'}
+                                </span>
+                              </button>
+                            )}
                           </div>
                         )}
                       </div>

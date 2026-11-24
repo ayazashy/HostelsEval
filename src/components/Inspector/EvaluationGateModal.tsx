@@ -4,8 +4,11 @@
 // ============================================================================
 
 import React, { useState } from 'react';
-import { FixtureEvaluation } from '../../types/hostel';
-import { evaluateClosedTicket } from '../../services/firestoreService';
+import { FixtureEvaluation, FacilityMediaVaultDoc } from '../../types/hostel';
+import {
+  evaluateClosedTicket,
+  fetchFacilityMediaOnDemand,
+} from '../../services/firestoreService';
 import { compressAndWatermarkImage } from '../../utils/imageCompressor';
 import { DEFECT_TAGS, getZoneNameAr, KSU_SERVICE_EVALUATION_URL } from '../../config/facilityTemplates';
 import { ImageViewerModal } from '../Common/ImageViewerModal';
@@ -22,6 +25,7 @@ import {
   ExternalLink,
   Copy,
   Check,
+  Eye,
   X,
 } from 'lucide-react';
 
@@ -52,10 +56,56 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
   const [isCompressing, setIsCompressing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [loadedVaults, setLoadedVaults] = useState<Record<string, FacilityMediaVaultDoc>>({});
+  const [loadingTarget, setLoadingTarget] = useState<string | null>(null);
 
   if (!currentItem) return null;
 
   const ticket = currentItem.maintenanceTicket;
+
+  const handleLoadAndPreviewGateMedia = async (target: 'maximo' | 'after' | 'before') => {
+    setLoadingTarget(target);
+    try {
+      let vault: FacilityMediaVaultDoc | null = loadedVaults[currentItem.id] || null;
+      if (!vault) {
+        vault = await fetchFacilityMediaOnDemand(currentItem.id);
+        if (vault) {
+          setLoadedVaults((prev) => ({ ...prev, [currentItem.id]: vault! }));
+        }
+      }
+      if (!vault) return;
+
+      if (target === 'maximo') {
+        const maxUrl = vault.maximoAttachmentBase64 || ticket?.maximoAttachmentBase64;
+        const maxType = vault.maximoAttachmentType || ticket?.maximoAttachmentType;
+        const maxName =
+          vault.maximoAttachmentName ||
+          ticket?.maximoAttachmentName ||
+          `Maximo_${ticket?.maximoNumber || currentItem.id}.pdf`;
+        if (maxUrl) {
+          if (maxType === 'pdf' || maxUrl.startsWith('data:application/pdf')) {
+            const a = document.createElement('a');
+            a.href = maxUrl;
+            a.download = maxName;
+            a.click();
+          } else {
+            setPreviewImage(maxUrl);
+          }
+        }
+      } else if (target === 'after') {
+        const afterUrl = vault.closurePhotoBase64 || ticket?.closurePhotoBase64;
+        if (afterUrl) setPreviewImage(afterUrl);
+      } else if (target === 'before') {
+        const beforeUrl =
+          vault.photoBase64 ||
+          vault.media?.find((m) => m.type === 'image')?.url ||
+          currentItem.photoBase64;
+        if (beforeUrl) setPreviewImage(beforeUrl);
+      }
+    } finally {
+      setLoadingTarget(null);
+    }
+  };
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -228,49 +278,66 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
                 {ticket?.closureNotes || 'تم إتمام الإصلاح وإغلاق البلاغ في النظام.'}
               </p>
 
-              {/* Maximo Attachment & Closure Photo */}
+              {/* Maximo Attachment & Closure Photo (On-Demand Fetch) */}
               <div className="flex flex-wrap items-center gap-2 pt-1">
-                {ticket?.maximoAttachmentBase64 && (
-                  ticket.maximoAttachmentType === 'pdf' ? (
-                    <a
-                      href={ticket.maximoAttachmentBase64}
-                      download={ticket.maximoAttachmentName || `Maximo_${ticket.maximoNumber}.pdf`}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 font-bold"
-                    >
-                      <FileText className="w-3.5 h-3.5 text-rose-600" />
-                      <span>مرفق بلاغ ماكسمو (PDF)</span>
-                    </a>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setPreviewImage(ticket.maximoAttachmentBase64 || null)}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 font-bold"
-                    >
-                      <ImageIcon className="w-3.5 h-3.5 text-blue-600" />
-                      <span>صورة مستند ماكسمو</span>
-                    </button>
-                  )
-                )}
-
-                {ticket?.closurePhotoBase64 && (
+                {(ticket?.hasMaximoAttachment || ticket?.maximoAttachmentBase64) && (
                   <button
                     type="button"
-                    onClick={() => setPreviewImage(ticket.closurePhotoBase64 || null)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold"
+                    disabled={loadingTarget === 'maximo'}
+                    onClick={() => handleLoadAndPreviewGateMedia('maximo')}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 font-bold"
                   >
-                    <ImageIcon className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>صورة الصيانة بعد الإصلاح</span>
+                    {ticket.maximoAttachmentType === 'pdf' ? (
+                      <>
+                        <FileText className="w-3.5 h-3.5 text-rose-600" />
+                        <span>
+                          {loadingTarget === 'maximo'
+                            ? 'جاري التحميل...'
+                            : 'مرفق بلاغ ماكسمو (PDF)'}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <ImageIcon className="w-3.5 h-3.5 text-blue-600" />
+                        <span>
+                          {loadingTarget === 'maximo'
+                            ? 'جاري التحميل...'
+                            : 'صورة مستند ماكسمو (عند الطلب)'}
+                        </span>
+                      </>
+                    )}
                   </button>
                 )}
 
-                {currentItem.photoBase64 && (
+                {(ticket?.hasClosurePhoto || ticket?.closurePhotoBase64) && (
                   <button
                     type="button"
-                    onClick={() => setPreviewImage(currentItem.photoBase64 || null)}
+                    disabled={loadingTarget === 'after'}
+                    onClick={() => handleLoadAndPreviewGateMedia('after')}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold"
+                  >
+                    <Eye className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>
+                      {loadingTarget === 'after'
+                        ? 'جاري التحميل...'
+                        : 'صورة الصيانة بعد الإصلاح (عند الطلب)'}
+                    </span>
+                  </button>
+                )}
+
+                {(currentItem.hasPhoto || currentItem.photoBase64) && (
+                  <button
+                    type="button"
+                    disabled={loadingTarget === 'before'}
+                    onClick={() => handleLoadAndPreviewGateMedia('before')}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 border border-slate-300 text-slate-700 font-bold"
                   >
-                    <ImageIcon className="w-3.5 h-3.5 text-slate-600" />
-                    <span>صورة العطل قبل الإصلاح</span>
+                    <Eye className="w-3.5 h-3.5 text-slate-600" />
+                    <span>
+                      {loadingTarget === 'before'
+                        ? 'جاري التحميل...'
+                        : 'صورة العطل قبل الإصلاح (عند الطلب)'}
+                    </span>
                   </button>
                 )}
               </div>

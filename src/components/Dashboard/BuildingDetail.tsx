@@ -9,6 +9,7 @@ import { Building3DViewer } from '../3D/Building3DViewer';
 import { WING_NAMES_AR } from '../../config/buildings';
 import { summarizeWing, getScoreColor } from '../../utils/healthScore';
 import { getBuildingStructure } from '../../utils/buildingStructureStore';
+import { fetchFacilityMediaOnDemand } from '../../services/firestoreService';
 import { TimelineViewer } from '../Timeline/TimelineViewer';
 import { ImageViewerModal } from '../Common/ImageViewerModal';
 import {
@@ -22,6 +23,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   Wrench,
+  Eye,
 } from 'lucide-react';
 
 interface BuildingDetailProps {
@@ -56,6 +58,8 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
   const [selectedWing, setSelectedWing] = useState<number | null>(null);
   const [selectedFloor, setSelectedFloor] = useState<number | null>(null);
   const [activePhotoModal, setActivePhotoModal] = useState<string | null>(null);
+  const [loadedThumbs, setLoadedThumbs] = useState<Record<string, string>>({});
+  const [loadingPhotoId, setLoadingPhotoId] = useState<string | null>(null);
 
   const structure = getBuildingStructure(building.id);
   const floorsCount = structure.floorsCount || building.floorsCount || 5;
@@ -67,9 +71,39 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
 
   const photoEvaluations = canViewSensitiveDetails
     ? evaluations.filter(
-        (e) => e.photoBase64 || (e.media && e.media.some((m) => m.type === 'image'))
+        (e) =>
+          e.hasPhoto ||
+          (e.mediaCount && e.mediaCount > 0) ||
+          e.photoBase64 ||
+          (e.media && e.media.some((m) => m.type === 'image'))
       )
     : [];
+
+  const handleOpenPhotoOnDemand = async (item: FixtureEvaluation) => {
+    const existingThumb =
+      loadedThumbs[item.id] ||
+      item.photoBase64 ||
+      item.media?.find((m) => m.type === 'image')?.url;
+    if (existingThumb) {
+      setActivePhotoModal(existingThumb);
+      return;
+    }
+
+    setLoadingPhotoId(item.id);
+    try {
+      const vault = await fetchFacilityMediaOnDemand(item.id);
+      const url =
+        vault?.photoBase64 ||
+        vault?.media?.find((m) => m.type === 'image')?.url ||
+        vault?.closurePhotoBase64;
+      if (url) {
+        setLoadedThumbs((prev) => ({ ...prev, [item.id]: url }));
+        setActivePhotoModal(url);
+      }
+    } finally {
+      setLoadingPhotoId(null);
+    }
+  };
 
   const wingsSummary = [1, 2, 3, 4].map((wId) => {
     const wEvals = evaluations.filter((e) => e.wingId === wId);
@@ -274,21 +308,32 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
                 {photoEvaluations.map((item) => {
                   const thumbUrl =
+                    loadedThumbs[item.id] ||
                     item.photoBase64 ||
                     item.media?.find((m) => m.type === 'image')?.url ||
                     '';
+                  const isLoadingThis = loadingPhotoId === item.id;
                   return (
                     <div
                       key={item.id}
-                      onClick={() => thumbUrl && setActivePhotoModal(thumbUrl)}
+                      onClick={() => handleOpenPhotoOnDemand(item)}
                       className="group relative rounded-xl overflow-hidden border border-slate-200 bg-slate-100 cursor-pointer shadow-xs hover:shadow-md transition"
                     >
-                      <div className="relative w-full h-28 overflow-hidden bg-slate-200">
-                        <img
-                          src={thumbUrl}
-                          alt={item.id}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                        />
+                      <div className="relative w-full h-28 overflow-hidden bg-slate-100 flex flex-col items-center justify-center gap-1.5">
+                        {thumbUrl ? (
+                          <img
+                            src={thumbUrl}
+                            alt={item.id}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                          />
+                        ) : (
+                          <div className="flex flex-col items-center justify-center gap-1 text-slate-600 px-2 text-center">
+                            <Eye className="w-5 h-5 text-blue-600" />
+                            <span className="text-[10px] font-bold">
+                              {isLoadingThis ? 'جاري التحميل...' : 'اضغط لتحميل ومعاينة الصورة'}
+                            </span>
+                          </div>
+                        )}
                         <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-xs text-white p-1 rounded-lg pointer-events-none transition group-hover:bg-blue-600">
                           <Maximize2 className="w-3.5 h-3.5" />
                         </div>

@@ -57,6 +57,29 @@ export interface FacilityMediaItem {
   capturedBy?: string;
 }
 
+export interface FacilityMediaMeta {
+  id: string;
+  type: 'image' | 'video' | 'pdf';
+  name?: string;
+  capturedAt: string;
+  capturedBy?: string;
+}
+
+export interface FacilityMediaVaultDoc {
+  id: string; // MEDIA_${fixtureId}
+  fixtureId: string;
+  buildingId: 'MEDIA_VAULT';
+  photoBase64?: string;
+  media?: FacilityMediaItem[];
+  closurePhotoBase64?: string;
+  maximoAttachmentBase64?: string;
+  maximoAttachmentName?: string;
+  maximoAttachmentType?: 'pdf' | 'image';
+  lastRejectionPhotoBase64?: string;
+  historyMediaById?: Record<string, FacilityMediaItem[]>;
+  updatedAt: string;
+}
+
 export type FacilityHistoryAction =
   | 'inspection'
   | 'maximo_registered'
@@ -75,6 +98,8 @@ export interface FacilityHistoryEvent {
   defects?: string[];
   notes?: string;
   media?: FacilityMediaItem[];
+  mediaMeta?: FacilityMediaMeta[];
+  hasMedia?: boolean;
   maximoNumber?: string;
   maximoUrl?: string;
   maximoAttachmentUrl?: string;
@@ -97,16 +122,19 @@ export interface MaintenanceTicketInfo {
   maximoAttachmentBase64?: string;
   maximoAttachmentName?: string;
   maximoAttachmentType?: 'pdf' | 'image';
+  hasMaximoAttachment?: boolean;
   registeredAt?: string;
   registeredBy?: string;
   closedAt?: string;
   closedBy?: string;
   closureNotes?: string;
   closurePhotoBase64?: string;
+  hasClosurePhoto?: boolean;
   reopenedAt?: string;
   reopenedCount?: number;
   lastRejectionReason?: string;
   lastRejectionPhotoBase64?: string;
+  hasRejectionPhoto?: boolean;
   verifiedAt?: string;
   verifiedBy?: string;
   serviceRating?: number;
@@ -145,6 +173,8 @@ export interface FixtureEvaluation {
   photoBase64?: string;
   hasPhoto: boolean;
   media?: FacilityMediaItem[];
+  mediaMeta?: FacilityMediaMeta[];
+  mediaCount?: number;
   history?: FacilityHistoryEvent[];
   maintenanceTicket?: MaintenanceTicketInfo;
   inspectorName?: string;
@@ -170,7 +200,9 @@ export interface EvaluationHistoryEntry {
   notes?: string;
   rating: number;
   photoBase64?: string;
+  hasPhoto?: boolean;
   media?: FacilityMediaItem[];
+  mediaMeta?: FacilityMediaMeta[];
   maximoNumber?: string;
   ticketStatus?: MaintenanceTicketStatus;
   inspectorName?: string;
