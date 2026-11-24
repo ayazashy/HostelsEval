@@ -66,9 +66,13 @@ export interface FacilityMediaMeta {
 }
 
 export interface FacilityMediaVaultDoc {
-  id: string; // MEDIA_${fixtureId}
+  id: string; // MEDIA_${fixtureId} or MEDIA_${fixtureId}_PART_${k}
   fixtureId: string;
   buildingId: 'MEDIA_VAULT';
+  partIndex?: number;
+  totalParts?: number;
+  parentDocId?: string;
+  overflowDocIds?: string[];
   photoBase64?: string;
   media?: FacilityMediaItem[];
   closurePhotoBase64?: string;
@@ -175,6 +179,8 @@ export interface FixtureEvaluation {
   media?: FacilityMediaItem[];
   mediaMeta?: FacilityMediaMeta[];
   mediaCount?: number;
+  mediaShardCount?: number;
+  mediaOverflowDocIds?: string[];
   history?: FacilityHistoryEvent[];
   maintenanceTicket?: MaintenanceTicketInfo;
   inspectorName?: string;

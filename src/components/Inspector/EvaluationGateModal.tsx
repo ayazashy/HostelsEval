@@ -117,8 +117,8 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
         inspectorName: leaderName,
       });
       setPhotoBase64(res.base64);
-    } catch {
-      alert('تعذر ضغط الصورة المرفقة');
+    } catch (err: any) {
+      alert(err?.message || 'تعذر ضغط الصورة المرفقة');
     } finally {
       setIsCompressing(false);
       e.target.value = '';

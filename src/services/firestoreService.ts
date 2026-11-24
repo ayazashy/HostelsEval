@@ -40,6 +40,11 @@ import {
   checkIsAdminUnlocked,
 } from '../utils/sessionStore';
 import { runWithNetworkProgress } from '../utils/networkProgressStore';
+import {
+  estimateFirestoreDocSizeBytes,
+  SAFE_FIRESTORE_DOC_BYTES,
+  MAX_SINGLE_FILE_BASE64_BYTES,
+} from '../utils/imageCompressor';
 
 export const EVALUATIONS_COLLECTION = 'evaluations';
 export const LOCAL_STORAGE_KEY = 'hostels_eval_local_cache';
@@ -577,8 +582,356 @@ function toCompactIndexEntry(evaluation: FixtureEvaluation): FixtureEvaluation {
 }
 
 /**
+ * Helper to merge an array of sharded FacilityMediaVaultDoc documents (Part 1 + Part 2 + ...)
+ * back into one unified FacilityMediaVaultDoc for seamless on-demand viewing.
+ */
+function mergeShardedMediaVaultDocs(
+  fixtureId: string,
+  shards: Array<Record<string, any>>
+): FacilityMediaVaultDoc {
+  const combinedMedia: FacilityMediaItem[] = [];
+  const seenMediaIds = new Set<string>();
+  const combinedHistoryMedia: Record<string, FacilityMediaItem[]> = {};
+
+  let photoBase64: string | undefined;
+  let closurePhotoBase64: string | undefined;
+  let maximoAttachmentBase64: string | undefined;
+  let maximoAttachmentName: string | undefined;
+  let maximoAttachmentType: 'pdf' | 'image' | undefined;
+  let lastRejectionPhotoBase64: string | undefined;
+  let updatedAt = new Date().toISOString();
+  let overflowDocIds: string[] | undefined;
+
+  for (const d of shards) {
+    if (!d || typeof d !== 'object') continue;
+    if (d.updatedAt) updatedAt = d.updatedAt;
+    if (Array.isArray(d.overflowDocIds) && d.overflowDocIds.length > 0) {
+      overflowDocIds = d.overflowDocIds;
+    }
+    if (!photoBase64 && isBase64DataUri(d.photoBase64)) {
+      photoBase64 = d.photoBase64;
+    }
+    if (Array.isArray(d.media)) {
+      for (const m of d.media) {
+        if (m && typeof m === 'object' && isBase64DataUri(m.url)) {
+          const mId = m.id || `m_${combinedMedia.length}`;
+          if (!seenMediaIds.has(mId)) {
+            seenMediaIds.add(mId);
+            combinedMedia.push(m);
+          }
+        }
+      }
+    }
+    if (!closurePhotoBase64 && isBase64DataUri(d.closurePhotoBase64)) {
+      closurePhotoBase64 = d.closurePhotoBase64;
+    }
+    if (!maximoAttachmentBase64 && isBase64DataUri(d.maximoAttachmentBase64)) {
+      maximoAttachmentBase64 = d.maximoAttachmentBase64;
+      maximoAttachmentName = d.maximoAttachmentName;
+      maximoAttachmentType = d.maximoAttachmentType;
+    }
+    if (!lastRejectionPhotoBase64 && isBase64DataUri(d.lastRejectionPhotoBase64)) {
+      lastRejectionPhotoBase64 = d.lastRejectionPhotoBase64;
+    }
+    if (d.historyMediaById && typeof d.historyMediaById === 'object') {
+      for (const [evId, evMedia] of Object.entries(d.historyMediaById)) {
+        if (Array.isArray(evMedia) && evMedia.length > 0) {
+          combinedHistoryMedia[evId] = evMedia as FacilityMediaItem[];
+        }
+      }
+    }
+  }
+
+  if (!photoBase64 && combinedMedia.length > 0) {
+    const firstImg = combinedMedia.find((m) => m.type === 'image');
+    if (firstImg) photoBase64 = firstImg.url;
+  }
+
+  return {
+    id: `${MEDIA_DOC_PREFIX}${fixtureId}`,
+    fixtureId,
+    buildingId: 'MEDIA_VAULT',
+    partIndex: 1,
+    totalParts: Math.max(1, shards.length),
+    overflowDocIds,
+    photoBase64,
+    media: combinedMedia.length > 0 ? combinedMedia : undefined,
+    closurePhotoBase64,
+    maximoAttachmentBase64,
+    maximoAttachmentName,
+    maximoAttachmentType,
+    lastRejectionPhotoBase64,
+    historyMediaById:
+      Object.keys(combinedHistoryMedia).length > 0 ? combinedHistoryMedia : undefined,
+    updatedAt,
+  };
+}
+
+/**
+ * Dynamically estimates document size and splits a facility's media across 1 or more
+ * linked Firestore documents (`MEDIA_${id}`, `MEDIA_${id}_PART_2`, `MEDIA_${id}_PART_3`, ...)
+ * so NO Firestore document ever exceeds the 1 MiB (1,048,576 bytes) hard limit!
+ */
+async function saveFacilityMediaVaultSharded(
+  fixtureId: string,
+  newVaultPatch: FacilityMediaVaultDoc,
+  secretCode: string,
+  nowIso: string,
+  replaceMediaList: boolean = false
+): Promise<{ totalParts: number; overflowDocIds: string[]; mergedVault: FacilityMediaVaultDoc }> {
+  const primaryDocId = `${MEDIA_DOC_PREFIX}${fixtureId}`;
+  const primaryRef = doc(db, EVALUATIONS_COLLECTION, primaryDocId);
+
+  // 1. Load existing sharded vault from LRU cache or Firestore so we preserve earlier attachments
+  let existingVault: FacilityMediaVaultDoc | null = getMediaVaultFromLru(fixtureId) || null;
+  let oldOverflowIds: string[] = existingVault?.overflowDocIds || [];
+
+  try {
+    const primarySnap = await getDoc(primaryRef);
+    if (primarySnap.exists()) {
+      const pData = primarySnap.data();
+      const cloudOverflowIds: string[] = Array.isArray(pData.overflowDocIds)
+        ? pData.overflowDocIds
+        : [];
+      oldOverflowIds = Array.from(new Set([...oldOverflowIds, ...cloudOverflowIds]));
+
+      const overflowSnaps =
+        cloudOverflowIds.length > 0
+          ? await Promise.all(
+              cloudOverflowIds.map((oid) => getDoc(doc(db, EVALUATIONS_COLLECTION, oid)))
+            )
+          : [];
+      const allCloudShards = [
+        pData,
+        ...overflowSnaps.filter((s) => s.exists()).map((s) => s.data()!),
+      ];
+      const cloudMerged = mergeShardedMediaVaultDocs(fixtureId, allCloudShards);
+      existingVault = mergeShardedMediaVaultDocs(fixtureId, [
+        cloudMerged,
+        ...(existingVault ? [existingVault] : []),
+      ]);
+    }
+  } catch {}
+
+  // 2. Merge existing vault with new patch
+  let finalMediaList: FacilityMediaItem[] = [];
+  if (replaceMediaList && newVaultPatch.media) {
+    finalMediaList = [...newVaultPatch.media];
+  } else {
+    const byId = new Map<string, FacilityMediaItem>();
+    for (const m of existingVault?.media || []) {
+      if (m && isBase64DataUri(m.url)) byId.set(m.id, m);
+    }
+    for (const m of newVaultPatch.media || []) {
+      if (m && isBase64DataUri(m.url)) byId.set(m.id, m);
+    }
+    finalMediaList = Array.from(byId.values());
+  }
+
+  const mergedVault: FacilityMediaVaultDoc = {
+    id: primaryDocId,
+    fixtureId,
+    buildingId: 'MEDIA_VAULT',
+    photoBase64:
+      newVaultPatch.photoBase64 ||
+      finalMediaList.find((m) => m.type === 'image')?.url ||
+      existingVault?.photoBase64,
+    media: finalMediaList.length > 0 ? finalMediaList : undefined,
+    closurePhotoBase64: newVaultPatch.closurePhotoBase64 || existingVault?.closurePhotoBase64,
+    maximoAttachmentBase64:
+      newVaultPatch.maximoAttachmentBase64 || existingVault?.maximoAttachmentBase64,
+    maximoAttachmentName:
+      newVaultPatch.maximoAttachmentName || existingVault?.maximoAttachmentName,
+    maximoAttachmentType:
+      newVaultPatch.maximoAttachmentType || existingVault?.maximoAttachmentType,
+    lastRejectionPhotoBase64:
+      newVaultPatch.lastRejectionPhotoBase64 || existingVault?.lastRejectionPhotoBase64,
+    historyMediaById: {
+      ...(existingVault?.historyMediaById || {}),
+      ...(newVaultPatch.historyMediaById || {}),
+    },
+    updatedAt: nowIso,
+  };
+
+  // 3. Break mergedVault into atomic attachment slots and verify each single file is < 1 MiB limit
+  type AtomicMediaSlot = {
+    label: string;
+    bytes: number;
+    applyToShard: (shard: Record<string, any>) => void;
+  };
+
+  const slots: AtomicMediaSlot[] = [];
+
+  // Only store standalone photoBase64 if it is NOT already identical to media[0].url
+  const firstMediaUrl = finalMediaList[0]?.url;
+  if (
+    mergedVault.photoBase64 &&
+    (!firstMediaUrl || mergedVault.photoBase64 !== firstMediaUrl)
+  ) {
+    const b = estimateFirestoreDocSizeBytes({ photoBase64: mergedVault.photoBase64 });
+    slots.push({
+      label: 'الصورة الأساسية للبلاغ',
+      bytes: b,
+      applyToShard: (shard) => {
+        shard.photoBase64 = mergedVault.photoBase64;
+      },
+    });
+  }
+
+  for (const mediaItem of finalMediaList) {
+    const b = estimateFirestoreDocSizeBytes(mediaItem);
+    slots.push({
+      label: mediaItem.name || `مرفق المرفق (${mediaItem.type})`,
+      bytes: b,
+      applyToShard: (shard) => {
+        if (!Array.isArray(shard.media)) shard.media = [];
+        shard.media.push(mediaItem);
+        if (!shard.photoBase64 && mediaItem.type === 'image') {
+          shard.photoBase64 = mediaItem.url;
+        }
+      },
+    });
+  }
+
+  if (mergedVault.closurePhotoBase64) {
+    const b = estimateFirestoreDocSizeBytes({
+      closurePhotoBase64: mergedVault.closurePhotoBase64,
+    });
+    slots.push({
+      label: 'صورة الإصلاح والإغلاق',
+      bytes: b,
+      applyToShard: (shard) => {
+        shard.closurePhotoBase64 = mergedVault.closurePhotoBase64;
+      },
+    });
+  }
+
+  if (mergedVault.maximoAttachmentBase64) {
+    const b = estimateFirestoreDocSizeBytes({
+      maximoAttachmentBase64: mergedVault.maximoAttachmentBase64,
+      maximoAttachmentName: mergedVault.maximoAttachmentName,
+      maximoAttachmentType: mergedVault.maximoAttachmentType,
+    });
+    slots.push({
+      label: mergedVault.maximoAttachmentName || 'مرفق بلاغ ماكسمو',
+      bytes: b,
+      applyToShard: (shard) => {
+        shard.maximoAttachmentBase64 = mergedVault.maximoAttachmentBase64;
+        shard.maximoAttachmentName = mergedVault.maximoAttachmentName;
+        shard.maximoAttachmentType = mergedVault.maximoAttachmentType;
+      },
+    });
+  }
+
+  if (mergedVault.lastRejectionPhotoBase64) {
+    const b = estimateFirestoreDocSizeBytes({
+      lastRejectionPhotoBase64: mergedVault.lastRejectionPhotoBase64,
+    });
+    slots.push({
+      label: 'صورة رفض الإغلاق',
+      bytes: b,
+      applyToShard: (shard) => {
+        shard.lastRejectionPhotoBase64 = mergedVault.lastRejectionPhotoBase64;
+      },
+    });
+  }
+
+  if (mergedVault.historyMediaById) {
+    // Keep up to 12 most recent history media events across shards
+    const entries = Object.entries(mergedVault.historyMediaById).slice(-12);
+    for (const [evId, evMediaList] of entries) {
+      if (!Array.isArray(evMediaList) || evMediaList.length === 0) continue;
+      const b = estimateFirestoreDocSizeBytes({ [evId]: evMediaList });
+      slots.push({
+        label: `مرفق محادثة (${evId})`,
+        bytes: b,
+        applyToShard: (shard) => {
+          if (!shard.historyMediaById) shard.historyMediaById = {};
+          shard.historyMediaById[evId] = evMediaList;
+        },
+      });
+    }
+  }
+
+  // Validate that no single atomic attachment exceeds the 1 MiB Firestore document capacity
+  for (const slot of slots) {
+    if (slot.bytes > MAX_SINGLE_FILE_BASE64_BYTES + 16384) {
+      const sizeMb = (slot.bytes / (1024 * 1024)).toFixed(2);
+      throw new Error(
+        `عفواً، المرفق «${slot.label}» بحجم (${sizeMb} MB) يتجاوز السعة القصوى المسموحة للملف الواحد في خادم قاعدة البيانات (1MB Server Capacity) حتى بعد الضغط.`
+      );
+    }
+  }
+
+  // 4. Pack atomic slots dynamically into 1 or more linked Firestore documents (< 850 KB each)
+  const createEmptyShard = (partIndex: number): Record<string, any> => ({
+    id: partIndex === 1 ? primaryDocId : `${primaryDocId}_PART_${partIndex}`,
+    fixtureId,
+    buildingId: 'MEDIA_VAULT',
+    partIndex,
+    parentDocId: primaryDocId,
+    secretCode,
+    updatedAt: nowIso,
+  });
+
+  const shardPayloads: Array<Record<string, any>> = [createEmptyShard(1)];
+  let currentShardBytes = estimateFirestoreDocSizeBytes(shardPayloads[0]);
+
+  for (const slot of slots) {
+    if (
+      currentShardBytes + slot.bytes > SAFE_FIRESTORE_DOC_BYTES &&
+      currentShardBytes > 4096
+    ) {
+      // Current document would exceed safe 1 MiB capacity -> open a new linked document for the same facility!
+      const nextPartIndex = shardPayloads.length + 1;
+      const nextShard = createEmptyShard(nextPartIndex);
+      slot.applyToShard(nextShard);
+      shardPayloads.push(nextShard);
+      currentShardBytes = estimateFirestoreDocSizeBytes(nextShard);
+    } else {
+      slot.applyToShard(shardPayloads[shardPayloads.length - 1]);
+      currentShardBytes += slot.bytes;
+    }
+  }
+
+  const totalParts = shardPayloads.length;
+  const overflowDocIds = shardPayloads.slice(1).map((s) => s.id as string);
+
+  for (const shard of shardPayloads) {
+    shard.totalParts = totalParts;
+  }
+  shardPayloads[0].overflowDocIds = overflowDocIds;
+
+  // 5. Write all dynamically linked shard documents to Firestore in parallel
+  await Promise.all(
+    shardPayloads.map((shard) =>
+      setDoc(doc(db, EVALUATIONS_COLLECTION, shard.id), stripUndefinedValues(shard))
+    )
+  );
+
+  // 6. Clean up any stale overflow shard documents that are no longer needed
+  const staleOverflowIds = oldOverflowIds.filter((oid) => !overflowDocIds.includes(oid));
+  if (staleOverflowIds.length > 0) {
+    await Promise.all(
+      staleOverflowIds.map(async (staleId) => {
+        try {
+          await deleteDoc(doc(db, EVALUATIONS_COLLECTION, staleId));
+        } catch {}
+      })
+    );
+  }
+
+  mergedVault.totalParts = totalParts;
+  mergedVault.overflowDocIds = overflowDocIds;
+  putMediaVaultInLru(fixtureId, mergedVault);
+
+  return { totalParts, overflowDocIds, mergedVault };
+}
+
+/**
  * On-Demand Media Loader: Fetches heavy Base64 attachments (photos, PDFs, videos)
  * ONLY when the user explicitly clicks/touches a specific ticket's attachment button.
+ * Automatically re-assembles dynamically linked multi-document shards (`MEDIA_${id}` + `MEDIA_${id}_PART_2`...).
  */
 export async function fetchFacilityMediaOnDemand(
   fixtureId: string
@@ -614,20 +967,24 @@ export async function fetchFacilityMediaOnDemand(
 
         if (mediaSnap.exists()) {
           const d = mediaSnap.data();
-          vault = {
-            id: `${MEDIA_DOC_PREFIX}${fixtureId}`,
-            fixtureId,
-            buildingId: 'MEDIA_VAULT',
-            photoBase64: d.photoBase64,
-            media: Array.isArray(d.media) ? d.media : undefined,
-            closurePhotoBase64: d.closurePhotoBase64,
-            maximoAttachmentBase64: d.maximoAttachmentBase64,
-            maximoAttachmentName: d.maximoAttachmentName,
-            maximoAttachmentType: d.maximoAttachmentType,
-            lastRejectionPhotoBase64: d.lastRejectionPhotoBase64,
-            historyMediaById: d.historyMediaById,
-            updatedAt: d.updatedAt || new Date().toISOString(),
-          };
+          const overflowIds: string[] = Array.isArray(d.overflowDocIds) ? d.overflowDocIds : [];
+
+          if (overflowIds.length > 0) {
+            updateProgress(
+              50,
+              `جاري تجميع (${overflowIds.length + 1}) مستندات وسائط مرتبطة للمرفق...`
+            );
+            const overflowSnaps = await Promise.all(
+              overflowIds.map((oid) => getDoc(doc(db, EVALUATIONS_COLLECTION, oid)))
+            );
+            const allShardDocs = [
+              d,
+              ...overflowSnaps.filter((s) => s.exists()).map((s) => s.data()!),
+            ];
+            vault = mergeShardedMediaVaultDocs(fixtureId, allShardDocs);
+          } else {
+            vault = mergeShardedMediaVaultDocs(fixtureId, [d]);
+          }
         }
 
         const hasCompleteMedia =
@@ -640,38 +997,19 @@ export async function fetchFacilityMediaOnDemand(
 
         // Fallback for week-1 legacy documents that still had Base64 embedded in /evaluations/{fixtureId}
         if (!hasCompleteMedia) {
-          updateProgress(60, 'جاري فحص السجل الأساسي للمرفق...');
+          updateProgress(65, 'جاري فحص السجل الأساسي للمرفق...');
           const legacyRef = doc(db, EVALUATIONS_COLLECTION, fixtureId);
           const legacySnap = await getDoc(legacyRef);
           if (legacySnap.exists()) {
             const rawLegacy = legacySnap.data();
             const extracted = extractMediaVaultFromEvaluation(rawLegacy);
             if (extracted) {
-              vault = {
-                ...extracted,
-                ...(vault || {}),
-                id: `${MEDIA_DOC_PREFIX}${fixtureId}`,
-                fixtureId,
-                buildingId: 'MEDIA_VAULT',
-                photoBase64: vault?.photoBase64 || extracted.photoBase64,
-                media: vault?.media && vault.media.length > 0 ? vault.media : extracted.media,
-                closurePhotoBase64: vault?.closurePhotoBase64 || extracted.closurePhotoBase64,
-                maximoAttachmentBase64:
-                  vault?.maximoAttachmentBase64 || extracted.maximoAttachmentBase64,
-                maximoAttachmentName:
-                  vault?.maximoAttachmentName || extracted.maximoAttachmentName,
-                maximoAttachmentType:
-                  vault?.maximoAttachmentType || extracted.maximoAttachmentType,
-                lastRejectionPhotoBase64:
-                  vault?.lastRejectionPhotoBase64 || extracted.lastRejectionPhotoBase64,
-                historyMediaById: {
-                  ...(extracted.historyMediaById || {}),
-                  ...(vault?.historyMediaById || {}),
-                },
-                updatedAt: vault?.updatedAt || extracted.updatedAt,
-              };
+              vault = mergeShardedMediaVaultDocs(fixtureId, [
+                extracted,
+                ...(vault ? [vault] : []),
+              ]);
 
-              // Lazily migrate this legacy doc in the background if caller is authenticated
+              // Lazily migrate this legacy doc into sharded media vault in the background if caller is authenticated
               const secretCode = getDecodedSecurityCode() || getAdminRawSecurityCode();
               if (secretCode && !migratedLegacyIds.has(fixtureId)) {
                 migrateSingleLegacyDocInBackground(rawLegacy, extracted, secretCode).catch(
@@ -704,20 +1042,21 @@ async function migrateSingleLegacyDocInBackground(
   migratedLegacyIds.add(rawDoc.id);
 
   try {
-    // 1. Save heavy media to /evaluations/MEDIA_${id}
-    const mediaRef = doc(db, EVALUATIONS_COLLECTION, `${MEDIA_DOC_PREFIX}${rawDoc.id}`);
-    await setDoc(
-      mediaRef,
-      stripUndefinedValues({
-        ...extractedVault,
-        secretCode,
-        updatedAt: new Date().toISOString(),
-      }),
-      { merge: true }
+    const nowIso = new Date().toISOString();
+    // 1. Save heavy media into dynamically sharded /evaluations/MEDIA_${id} (+ _PART_2 if >850KB)
+    const shardInfo = await saveFacilityMediaVaultSharded(
+      rawDoc.id,
+      extractedVault,
+      secretCode,
+      nowIso
     );
 
     // 2. Overwrite main evaluation document /evaluations/${id} WITHOUT any Base64
     const stripped = stripHeavyMediaFromEvaluation(rawDoc);
+    stripped.mediaShardCount = shardInfo.totalParts;
+    if (shardInfo.overflowDocIds.length > 0) {
+      stripped.mediaOverflowDocIds = shardInfo.overflowDocIds;
+    }
     const evalRef = doc(db, EVALUATIONS_COLLECTION, rawDoc.id);
     await setDoc(
       evalRef,
@@ -1013,46 +1352,36 @@ export async function saveEvaluation(
     },
     async (updateProgress) => {
       try {
-        // 1. If there is Base64 media in this save, store it in dedicated /evaluations/MEDIA_${id}
+        // 1. If there is Base64 media in this save, dynamically estimate capacity & shard across MEDIA_${id} (+ _PART_2...)
         if (extractedVault) {
-          updateProgress(25, 'جاري رفع الصور والمرفقات إلى خزنة الوسائط...');
-          const mediaDocRef = doc(
-            db,
-            EVALUATIONS_COLLECTION,
-            `${MEDIA_DOC_PREFIX}${strippedEvaluation.id}`
-          );
-          const mediaPayload: Record<string, any> = {
-            id: `${MEDIA_DOC_PREFIX}${strippedEvaluation.id}`,
-            fixtureId: strippedEvaluation.id,
-            buildingId: 'MEDIA_VAULT',
+          updateProgress(25, 'جاري فحص سعة المستند (1MB) ورفع المرفقات...');
+          const replaceMediaList = Array.isArray(evaluation.media) && evaluation.media.length > 0;
+          const shardResult = await saveFacilityMediaVaultSharded(
+            strippedEvaluation.id,
+            extractedVault,
             secretCode,
-            updatedAt: nowIso,
-          };
-          if (extractedVault.photoBase64) mediaPayload.photoBase64 = extractedVault.photoBase64;
-          if (extractedVault.media && extractedVault.media.length > 0) {
-            mediaPayload.media = extractedVault.media;
+            nowIso,
+            replaceMediaList
+          );
+          strippedEvaluation.mediaShardCount = shardResult.totalParts;
+          if (shardResult.overflowDocIds.length > 0) {
+            strippedEvaluation.mediaOverflowDocIds = shardResult.overflowDocIds;
+            updateProgress(
+              50,
+              `تم توزيع المرفقات تلقائياً على (${shardResult.totalParts}) مستندات سحابية مرتبطة...`
+            );
           }
-          if (extractedVault.closurePhotoBase64) {
-            mediaPayload.closurePhotoBase64 = extractedVault.closurePhotoBase64;
+          cleanPayload.mediaShardCount = shardResult.totalParts;
+          if (shardResult.overflowDocIds.length > 0) {
+            cleanPayload.mediaOverflowDocIds = shardResult.overflowDocIds;
           }
-          if (extractedVault.maximoAttachmentBase64) {
-            mediaPayload.maximoAttachmentBase64 = extractedVault.maximoAttachmentBase64;
-            mediaPayload.maximoAttachmentName = extractedVault.maximoAttachmentName;
-            mediaPayload.maximoAttachmentType = extractedVault.maximoAttachmentType;
-          }
-          if (extractedVault.lastRejectionPhotoBase64) {
-            mediaPayload.lastRejectionPhotoBase64 = extractedVault.lastRejectionPhotoBase64;
-          }
-          if (extractedVault.historyMediaById) {
-            mediaPayload.historyMediaById = extractedVault.historyMediaById;
-          }
-          await setDoc(mediaDocRef, stripUndefinedValues(mediaPayload), { merge: true });
+          saveToLocalCache(strippedEvaluation);
           migratedLegacyIds.add(strippedEvaluation.id);
         } else if (
           strippedEvaluation.hasPhoto &&
           !migratedLegacyIds.has(strippedEvaluation.id)
         ) {
-          // Ensure any legacy embedded media on /evaluations/${id} is preserved in MEDIA_${id} before overwriting
+          // Ensure any legacy embedded media on /evaluations/${id} is preserved in sharded MEDIA_${id} before overwriting
           try {
             const existingSnap = await getDoc(
               doc(db, EVALUATIONS_COLLECTION, strippedEvaluation.id)
@@ -1061,29 +1390,26 @@ export async function saveEvaluation(
               const rawExisting = existingSnap.data();
               const legacyMedia = extractMediaVaultFromEvaluation(rawExisting);
               if (legacyMedia) {
-                await setDoc(
-                  doc(
-                    db,
-                    EVALUATIONS_COLLECTION,
-                    `${MEDIA_DOC_PREFIX}${strippedEvaluation.id}`
-                  ),
-                  stripUndefinedValues({
-                    ...legacyMedia,
-                    secretCode,
-                    updatedAt: nowIso,
-                  }),
-                  { merge: true }
+                const shardResult = await saveFacilityMediaVaultSharded(
+                  strippedEvaluation.id,
+                  legacyMedia,
+                  secretCode,
+                  nowIso
                 );
+                cleanPayload.mediaShardCount = shardResult.totalParts;
+                if (shardResult.overflowDocIds.length > 0) {
+                  cleanPayload.mediaOverflowDocIds = shardResult.overflowDocIds;
+                }
               }
             }
             migratedLegacyIds.add(strippedEvaluation.id);
           } catch {}
         }
 
-        // 2. Write lightweight stripped evaluation document (ZERO Base64!)
-        updateProgress(65, 'جاري تحديث سجل المرفق الخفيف...');
+        // 2. Verify main lightweight evaluation document is well below 1 MiB and write it
+        updateProgress(70, 'جاري تحديث سجل المرفق الخفيف...');
         const docRef = doc(db, EVALUATIONS_COLLECTION, strippedEvaluation.id);
-        await setDoc(docRef, cleanPayload);
+        await setDoc(docRef, stripUndefinedValues(cleanPayload));
 
         // 3. Update global lightweight index document for instant campus-wide loading
         updateProgress(85, 'جاري تحديث الفهرس السريع للبلاغات...');
@@ -1722,21 +2048,24 @@ export async function syncAllEvaluationsToFirestore(
         updateProgress(pct, `جاري رفع السجل (${i + 1} / ${itemsToSync.length}): ${item.id}`);
 
         try {
+          const nowIso = new Date().toISOString();
           const extracted = extractMediaVaultFromEvaluation(item);
+          let shardCount: number | undefined;
+          let overflowIds: string[] | undefined;
           if (extracted && secretCode) {
-            const mediaRef = doc(db, EVALUATIONS_COLLECTION, `${MEDIA_DOC_PREFIX}${item.id}`);
-            await setDoc(
-              mediaRef,
-              stripUndefinedValues({
-                ...extracted,
-                secretCode,
-                updatedAt: new Date().toISOString(),
-              }),
-              { merge: true }
+            const shardRes = await saveFacilityMediaVaultSharded(
+              item.id,
+              extracted,
+              secretCode,
+              nowIso
             );
+            shardCount = shardRes.totalParts;
+            overflowIds = shardRes.overflowDocIds;
           }
 
           const stripped = stripHeavyMediaFromEvaluation(item);
+          if (shardCount) stripped.mediaShardCount = shardCount;
+          if (overflowIds && overflowIds.length > 0) stripped.mediaOverflowDocIds = overflowIds;
           const docRef = doc(db, EVALUATIONS_COLLECTION, stripped.id);
           const rawPayload: Record<string, any> = {
             ...stripped,
@@ -2168,13 +2497,18 @@ export async function resetBuildingEvaluations(
           console.warn(`[Firestore] Tombstone write failed for ${id}:`, err);
         }
 
-        // B. Also attempt hard delete on both main doc and media vault doc
+        // B. Also attempt hard delete on main doc, primary media vault doc, and any overflow shard docs
         try {
           await deleteDoc(docRef);
         } catch {}
         try {
           await deleteDoc(mediaRef);
         } catch {}
+        for (let part = 2; part <= 6; part++) {
+          try {
+            await deleteDoc(doc(db, EVALUATIONS_COLLECTION, `${MEDIA_DOC_PREFIX}${id}_PART_${part}`));
+          } catch {}
+        }
       })
     );
 

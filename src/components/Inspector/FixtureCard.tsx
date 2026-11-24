@@ -20,7 +20,11 @@ import {
   KSU_SERVICE_EVALUATION_URL,
 } from '../../config/facilityTemplates';
 import { generateFixtureUID } from '../../utils/uidGenerator';
-import { processFacilityMediaFile, compressAndWatermarkImage } from '../../utils/imageCompressor';
+import {
+   processFacilityMediaFile,
+  compressAndWatermarkImage,
+  estimateFacilityMediaShards,
+} from '../../utils/imageCompressor';
 import {
   CloudSaveResult,
   appendFacilityChatMessage,
@@ -363,8 +367,8 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    if (mediaList.length + files.length > 6) {
-      alert('الحد الأقصى 6 ملفات وسائط لكل مرفق لضمان سرعة المزامنة السحابية.');
+    if (mediaList.length + files.length > 12) {
+      alert('الحد الأقصى 12 ملف وسائط لكل مرفق.');
       return;
     }
 
@@ -380,7 +384,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
       }
       setMediaList((prev) => [...prev, ...newItems]);
     } catch (err: any) {
-      alert(err?.message || 'حدث خطأ أثناء معالجة الملف المرفق');
+      alert(err?.message || 'حدث خطأ أثناء معالجة وضغط الملف المرفق');
     } finally {
       setIsProcessingMedia(false);
       e.target.value = '';
@@ -465,8 +469,8 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
         inspectorName,
       });
       setChatPhotoBase64(res.base64);
-    } catch {
-      alert('تعذر ضغط الصورة');
+    } catch (err: any) {
+      alert(err?.message || 'تعذر ضغط الصورة');
     } finally {
       setIsProcessingMedia(false);
       e.target.value = '';
@@ -877,18 +881,35 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
             </div>
           </div>
 
-          {/* Multi-Media Uploader (Multiple Photos, Short Video, PDF) */}
+          {/* Multi-Media Uploader (Multiple Photos, Short Video, PDF) with 1MB Capacity Estimator */}
           <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-1">
               <label className="text-xs font-bold text-slate-800">
-                2. تصوير العطل ({mediaList.length}/6 صور أو فيديو):
+                2. تصوير العطل ({mediaList.length} مرفقات — ضغط تلقائي وتوزيع ديناميكي تحت 1MB):
               </label>
               {isProcessingMedia && (
                 <span className="text-[11px] font-bold text-blue-600 animate-pulse">
-                  جاري ضغط وإرفاق الوسائط...
+                  جاري ضغط وفحص سعة الوسائط...
                 </span>
               )}
             </div>
+
+            {mediaList.length > 0 && (() => {
+              const shardEst = estimateFacilityMediaShards(mediaList);
+              const sizeKb = Math.round(shardEst.totalBase64Bytes / 1024);
+              return (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <span className="text-slate-700 font-bold">
+                    الحجم بعد الضغط: <span className="font-mono text-blue-700">{sizeKb} KB</span>
+                  </span>
+                  <span className="px-2 py-0.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold">
+                    {shardEst.estimatedDocsCount > 1
+                      ? `موزّع تلقائياً على (${shardEst.estimatedDocsCount}) مستندات سحابية مرتبطة (< 1MB لكل مستند)`
+                      : `ضمن سعة مستند سحابي واحد (${shardEst.currentDocFillPct}% من حد 1MB)`}
+                  </span>
+                </div>
+              );
+            })()}
 
             {mediaList.length > 0 && (
               <div className="flex items-center gap-2 overflow-x-auto py-1">

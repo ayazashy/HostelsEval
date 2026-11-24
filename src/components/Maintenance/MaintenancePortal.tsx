@@ -458,8 +458,8 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
         inspectorName: technicianName,
       });
       setClosurePhotoBase64(res.base64);
-    } catch {
-      alert('تعذر ضغط صورة الإصلاح');
+    } catch (err: any) {
+      alert(err?.message || 'تعذر ضغط صورة الإصلاح');
     } finally {
       setIsProcessingClosureFile(false);
       e.target.value = '';
@@ -488,8 +488,8 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
       });
       setClosingItem(null);
       onRefreshEvaluations();
-    } catch {
-      alert('حدث خطأ أثناء إغلاق البلاغ');
+    } catch (err: any) {
+      alert(err?.message || 'حدث خطأ أثناء إغلاق البلاغ');
     } finally {
       setIsSubmittingClosure(false);
     }
@@ -524,8 +524,8 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
         inspectorName: technicianName,
       });
       setChatPhotoBase64(res.base64);
-    } catch {
-      alert('تعذر ضغط الصورة');
+    } catch (err: any) {
+      alert(err?.message || 'تعذر ضغط الصورة');
     } finally {
       e.target.value = '';
     }
