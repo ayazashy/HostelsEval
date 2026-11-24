@@ -122,10 +122,10 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
             style={{ height: '44px', width: 'auto', maxWidth: '140px', objectFit: 'contain' }}
           />
           <h1 className="text-base sm:text-lg font-bold text-slate-900 leading-snug">
-            برنامج الصيانة المكثفة ومتابعة المرافق والخدمات
+            متابعة وصيانة مرافق الإسكان الطلابي
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            إسكان الطلاب بجامعة الملك سعود • 34 مبنى سكني
+            جامعة الملك سعود
           </p>
         </div>
 
@@ -253,49 +253,15 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
               </button>
             </div>
 
-            <div
-              className={`rounded-xl p-3 text-[11px] leading-relaxed border ${
-                staffTrack === 'cleaning'
-                  ? 'bg-sky-50 border-sky-200 text-sky-900'
-                  : staffTrack === 'viewer'
-                  ? 'bg-indigo-50 border-indigo-200 text-indigo-900'
-                  : 'bg-emerald-50 border-emerald-200 text-emerald-900'
-              }`}
-            >
-              {staffTrack === 'cleaning' ? (
-                <>
-                  <strong>بوابة الخدمات (النظافة ومكافحة الحشرات والقوارض):</strong> تعرض فقط بلاغات النظافة والآفات مستقلة عن الصيانة، مع إرفاق صورة المعالجة لاعتماد رائد المبنى.
-                </>
-              ) : staffTrack === 'viewer' ? (
-                <>
-                  <strong>حساب متابعة الأداء والمؤشرات (عرض فقط بدون صلاحيات تعديل):</strong> يتيح استعراض لوحة المعلومات ومؤشرات أداء رواد المباني (KPI) ونسب إتمام المسح الشامل للمباني الـ 34 دون إمكانية تعديل أي بيانات في النظام.
-                </>
-              ) : (
-                <>
-                  <strong>بوابة الصيانة المكثفة وماكسمو (4 أقسام):</strong> تشمل السباكة، النجارة والمدني، الكهرباء، والتكييف والمصاعد، مع إرفاق صورة الإصلاح ورقم ماكسمو.
-                </>
-              )}
-            </div>
-
             <div className="flex flex-col gap-1.5">
               <label className="text-slate-700 font-bold">
-                {staffTrack === 'cleaning'
-                  ? 'اسم مشرف / فني النظافة ومكافحة الآفات:'
-                  : staffTrack === 'viewer'
-                  ? 'اسم مسؤول المتابعة / المراقب (اختياري):'
-                  : 'اسم فني / مسؤول الصيانة:'}
+                {staffTrack === 'viewer' ? 'الاسم (اختياري):' : 'الاسم:'}
               </label>
               <input
                 type="text"
                 value={technicianName}
                 onChange={(e) => setTechnicianName(e.target.value)}
-                placeholder={
-                  staffTrack === 'cleaning'
-                    ? 'مثال: مشرف النظافة / فريق مكافحة الآفات...'
-                    : staffTrack === 'viewer'
-                    ? 'مثال: إدارة الإسكان / متابع مؤشرات الأداء...'
-                    : 'مثال: م. خالد / فني السباكة والكهرباء...'
-                }
+                placeholder="أدخل الاسم..."
                 required={staffTrack !== 'viewer'}
                 className="bg-slate-50 border border-slate-300 text-slate-900 rounded-xl px-3 py-2.5 placeholder-slate-400"
               />
@@ -303,11 +269,7 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
 
             <div className="flex flex-col gap-1.5">
               <label className="text-slate-700 font-bold">
-                {staffTrack === 'cleaning'
-                  ? 'كود دخول النظافة والخدمات:'
-                  : staffTrack === 'viewer'
-                  ? 'كود دخول متابعة الأداء والمؤشرات (عرض فقط):'
-                  : 'كود دخول الصيانة:'}
+                كود الدخول:
               </label>
               <div className="relative">
                 <KeyRound className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -315,13 +277,7 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
                   type="password"
                   value={maintenanceCode}
                   onChange={(e) => setMaintenanceCode(e.target.value)}
-                  placeholder={
-                    staffTrack === 'cleaning'
-                      ? 'أدخل كود دخول النظافة المعتمد من المشرف...'
-                      : staffTrack === 'viewer'
-                      ? 'أدخل كود متابعة الأداء والمؤشرات المعتمد من المشرف...'
-                      : 'أدخل كود دخول الصيانة المعتمد من المشرف...'
-                  }
+                  placeholder="أدخل كود الدخول..."
                   required
                   className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-xl pr-9 pl-4 py-2.5 placeholder-slate-400 font-mono"
                 />
@@ -347,10 +303,10 @@ export const AdminGateway: React.FC<AdminGatewayProps> = ({
               <Wrench className="w-4 h-4" />
               <span>
                 {staffTrack === 'cleaning'
-                  ? 'دخول بوابة النظافة ومكافحة الآفات'
+                  ? 'دخول بوابة النظافة'
                   : staffTrack === 'viewer'
-                  ? 'دخول لوحة مؤشرات الأداء والمتابعة (عرض فقط)'
-                  : 'دخول بوابة الصيانة المكثفة'}
+                  ? 'دخول لوحة المؤشرات'
+                  : 'دخول بوابة الصيانة'}
               </span>
             </button>
           </form>

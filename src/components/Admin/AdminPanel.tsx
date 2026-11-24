@@ -35,6 +35,7 @@ import {
   FIRESTORE_SECRET_COLLECTION,
   FIRESTORE_SECRET_DOC,
 } from '../../utils/securityGate';
+import { formatStandardDate } from '../../utils/imageCompressor';
 import {
   loadActiveFacilityCategories,
   addNewFacilityItem,
@@ -1255,11 +1256,7 @@ service cloud.firestore {
                   {logs.map((log) => (
                     <tr key={log.id} className="hover:bg-slate-50">
                       <td className="p-3 text-slate-500">
-                        {new Date(log.timestamp).toLocaleTimeString('ar-SA', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          second: '2-digit',
-                        })}
+                        {formatStandardDate(log.timestamp, true)}
                       </td>
                       <td className="p-3 font-sans font-bold text-slate-900">
                         {log.actorName}

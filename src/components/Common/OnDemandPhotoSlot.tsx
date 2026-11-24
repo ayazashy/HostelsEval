@@ -101,3 +101,4 @@ export const OnDemandPhotoSlot: React.FC<OnDemandPhotoSlotProps> = ({
     </button>
   );
 };
+

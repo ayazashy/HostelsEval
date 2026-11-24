@@ -21,9 +21,9 @@ import {
 } from '../../config/facilityTemplates';
 import { generateFixtureUID } from '../../utils/uidGenerator';
 import {
-   processFacilityMediaFile,
+  processFacilityMediaFile,
   compressAndWatermarkImage,
-  estimateFacilityMediaShards,
+  formatStandardDate,
 } from '../../utils/imageCompressor';
 import {
   CloudSaveResult,
@@ -495,6 +495,8 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
       floor,
       categoryCode,
       fixtureTypeCode: template.typeCode,
+      fixtureNameAr: template.nameAr,
+      fixtureNameEn: template.nameEn,
       fixtureIndex,
       status,
       defects: selectedDefects,
@@ -579,6 +581,8 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
         floor,
         categoryCode,
         fixtureTypeCode: template.typeCode,
+        fixtureNameAr: template.nameAr,
+        fixtureNameEn: template.nameEn,
         fixtureIndex,
         status,
         defects: selectedDefects,
@@ -910,12 +914,12 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
           {isExpanded ? (
             <>
               <ChevronUp className="w-3.5 h-3.5" />
-              <span>إخفاء خيارات العطل والوسائط</span>
+              <span>إخفاء التفاصيل</span>
             </>
           ) : (
             <>
               <ChevronDown className="w-3.5 h-3.5" />
-              <span>تحديد نوع العطل / إرفاق صور وتوضيح ({mediaList.length})</span>
+              <span>تفاصيل العطل والصور ({mediaList.length})</span>
             </>
           )}
         </button>
@@ -928,14 +932,14 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between gap-2">
               <label className="text-xs font-bold text-slate-800">
-                1. اختر العطل المحدد من القائمة المعيارية (يظهر للفني بالعربية والإنجليزية):
+                نوع العطل:
               </label>
               <button
                 type="button"
                 onClick={() => setShowAllDefects(!showAllDefects)}
                 className="text-[11px] font-bold text-blue-600 hover:underline shrink-0"
               >
-                {showAllDefects ? 'عرض أعطال هذا المرفق فقط' : 'عرض كافة الأعطال (+)'}
+                {showAllDefects ? 'أعطال المرفق' : 'كل الأعطال (+)'}
               </button>
             </div>
 
@@ -969,35 +973,18 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
             </div>
           </div>
 
-          {/* Multi-Media Uploader (Multiple Photos, Short Video, PDF) with 1MB Capacity Estimator */}
+          {/* Multi-Media Uploader (Multiple Photos, Short Video, PDF) */}
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center justify-between gap-1">
               <label className="text-xs font-bold text-slate-800">
-                2. تصوير العطل ({mediaList.length} مرفقات — ضغط تلقائي وتوزيع ديناميكي تحت 1MB):
+                المرفقات والصور ({mediaList.length}):
               </label>
               {isProcessingMedia && (
                 <span className="text-[11px] font-bold text-blue-600 animate-pulse">
-                  جاري ضغط وفحص سعة الوسائط...
+                  جاري معالجة الصورة...
                 </span>
               )}
             </div>
-
-            {mediaList.length > 0 && (() => {
-              const shardEst = estimateFacilityMediaShards(mediaList);
-              const sizeKb = Math.round(shardEst.totalBase64Bytes / 1024);
-              return (
-                <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                  <span className="text-slate-700 font-bold">
-                    الحجم بعد الضغط: <span className="font-mono text-blue-700">{sizeKb} KB</span>
-                  </span>
-                  <span className="px-2 py-0.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold">
-                    {shardEst.estimatedDocsCount > 1
-                      ? `موزّع تلقائياً على (${shardEst.estimatedDocsCount}) مستندات سحابية مرتبطة (< 1MB لكل مستند)`
-                      : `ضمن سعة مستند سحابي واحد (${shardEst.currentDocFillPct}% من حد 1MB)`}
-                  </span>
-                </div>
-              );
-            })()}
 
             {mediaList.length > 0 && (
               <div className="flex flex-wrap items-center gap-2 py-1">
@@ -1064,7 +1051,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                   disabled={isProcessingMedia}
                 />
                 <Camera className="w-5 h-5 text-blue-600 shrink-0" />
-                <span className="font-bold text-xs text-blue-900">التقاط صورة بالكاميرا</span>
+                <span className="font-bold text-xs text-blue-900">التقاط صورة</span>
               </label>
 
               <label className="cursor-pointer border-2 border-dashed border-slate-300 hover:border-violet-500 rounded-xl p-3 flex items-center justify-center gap-2 bg-slate-50 hover:bg-violet-50/40 transition active:scale-98">
@@ -1077,7 +1064,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
                   disabled={isProcessingMedia}
                 />
                 <Plus className="w-5 h-5 text-violet-600 shrink-0" />
-                <span className="font-bold text-xs text-slate-800">صور متعددة / فيديو</span>
+                <span className="font-bold text-xs text-slate-800">صور / فيديو</span>
               </label>
             </div>
           </div>
@@ -1085,12 +1072,12 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
           {/* Optional Side Note / Clarification */}
           <div className="flex flex-col gap-1">
             <label className="text-xs font-bold text-slate-800">
-              3. توضيح إضافي على جنب (اختياري):
+              ملاحظات (اختياري):
             </label>
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="أي توضيح إضافي بجانب الاختيار (مثال: المغسلة الوسطى بجوار الباب)..."
+              placeholder="وصف موقع أو تفاصيل العطل..."
               rows={2}
               className="w-full text-xs bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none"
             />
@@ -1114,15 +1101,15 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
             {isReadOnly ? (
               <>
                 <Lock className="w-4 h-4" />
-                <span>تسجيل الدخول مطلوب لحفظ البلاغ</span>
+                <span>تسجيل الدخول مطلوب</span>
               </>
             ) : (
               <>
                 <Check className="w-4 h-4" />
                 <span>
                   {isSaving
-                    ? 'جاري إرسال البلاغ للقسم المختص...'
-                    : `إرسال البلاغ إلى (${activeDeptInfo?.nameAr || 'الصيانة'}) وتحديث محادثة المرفق`}
+                    ? 'جاري الحفظ...'
+                    : `حفظ وإرسال البلاغ (${activeDeptInfo?.nameAr || 'الصيانة'})`}
                 </span>
               </>
             )}
@@ -1398,13 +1385,7 @@ export const FixtureCard: React.FC<FixtureCardProps> = ({
               ) : (
                 <div className="flex flex-col gap-2.5">
                   {historyList.map((ev) => {
-                    const d = new Date(ev.timestamp);
-                    const dateStr = d.toLocaleDateString('ar-SA', {
-                      month: 'short',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    });
+                    const dateStr = formatStandardDate(ev.timestamp, true);
 
                     const isTech = ev.actorRole === 'maintenance' || ev.actorRole === 'cleaning';
 

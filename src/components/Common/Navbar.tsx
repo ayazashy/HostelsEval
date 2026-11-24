@@ -104,10 +104,10 @@ export const Navbar: React.FC<NavbarProps> = ({
             />
             <div className="min-w-0">
               <h1 className="text-[11px] sm:text-sm md:text-base font-bold text-slate-900 tracking-tight leading-snug">
-                برنامج الصيانة المكثفة ومتابعة مرافق الإسكان
+                متابعة وصيانة مرافق الإسكان
               </h1>
               <p className="text-[10px] text-slate-500 hidden sm:block leading-snug">
-                جامعة الملك سعود • عمادة شؤون الطلاب
+                جامعة الملك سعود • الإسكان الطلابي
               </p>
             </div>
           </div>
@@ -123,7 +123,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <Building2 className="w-3.5 h-3.5" />
-              <span>مجمع المباني (34)</span>
+              <span>المباني (34)</span>
             </button>
 
             {canViewKPI && (
@@ -136,7 +136,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 }`}
               >
                 <BarChart3 className="w-3.5 h-3.5" />
-                <span>مؤشرات أداء الرواد (KPI)</span>
+                <span>مؤشرات الأداء</span>
               </button>
             )}
 
@@ -156,7 +156,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 }`}
               >
                 <ClipboardCheck className="w-3.5 h-3.5" />
-                <span>فحص رائد المبنى</span>
+                <span>رائد المبنى</span>
                 {pendingEvaluationCount > 0 && (isAdmin || auth) && (
                   <span className="px-1.5 py-0.2 bg-purple-600 text-white text-[10px] rounded-full animate-pulse">
                     {pendingEvaluationCount}
@@ -183,8 +183,8 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <Wrench className="w-3.5 h-3.5" />
                 <span>
                   {maintenanceAuth?.role === 'cleaning'
-                    ? 'بوابة النظافة والآفات'
-                    : 'بوابة الصيانة والخدمات'}
+                    ? 'النظافة والآفات'
+                    : 'الصيانة'}
                 </span>
               </button>
             )}

@@ -9,7 +9,7 @@ import {
   evaluateClosedTicket,
   fetchFacilityMediaOnDemand,
 } from '../../services/firestoreService';
-import { compressAndWatermarkImage } from '../../utils/imageCompressor';
+import { compressAndWatermarkImage, formatStandardDate } from '../../utils/imageCompressor';
 import { DEFECT_TAGS, getZoneNameAr, KSU_SERVICE_EVALUATION_URL } from '../../config/facilityTemplates';
 import { ImageViewerModal, MediaGalleryEntry } from '../Common/ImageViewerModal';
 import { OnDemandPhotoSlot } from '../Common/OnDemandPhotoSlot';
@@ -229,10 +229,10 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
             </div>
             <div>
               <h3 className="text-sm font-bold">
-                تقييم الخدمة الإلزامي لرائد المبنى ({buildingId})
+                اعتماد وتقييم إغلاق البلاغ ({buildingId})
               </h3>
               <p className="text-[11px] text-purple-100">
-                متبقي {pendingTickets.length} بلاغ مغلق من الصيانة يتطلب تقييمك لفتح البلاغات الجديدة
+                متبقي {pendingTickets.length} بلاغ بانتظار التقييم
               </p>
             </div>
           </div>
@@ -323,7 +323,7 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
                 </span>
                 {ticket?.closedAt && (
                   <span className="font-mono text-[10px] text-slate-500">
-                    {new Date(ticket.closedAt).toLocaleDateString('ar-SA')}
+                    {formatStandardDate(ticket.closedAt)}
                   </span>
                 )}
               </div>
@@ -392,7 +392,7 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
           {/* Step 1: Was it actually fixed? */}
           <div className="flex flex-col gap-2">
             <label className="font-bold text-slate-900">
-              1. بعد معاينتك الميدانية للمرفق، هل تم الإصلاح فعلياً؟
+              هل تم الإصلاح؟
             </label>
             <div className="grid grid-cols-2 gap-2.5">
               <button
@@ -410,10 +410,7 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
                 <CheckCircle2
                   className={`w-6 h-6 ${isFixed === true ? 'text-emerald-600' : 'text-slate-400'}`}
                 />
-                <span>نعم، تم الإصلاح بنجاح</span>
-                <span className="text-[10px] font-normal text-slate-500">
-                  اعتماد إغلاق البلاغ وتحويل المرفق لسليم
-                </span>
+                <span>نعم، تم الإصلاح</span>
               </button>
 
               <button
@@ -431,17 +428,14 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
                 <XCircle
                   className={`w-6 h-6 ${isFixed === false ? 'text-rose-600' : 'text-slate-400'}`}
                 />
-                <span>لا، إغلاق صوري</span>
-                <span className="text-[10px] font-normal text-slate-500">
-                  إعادة فتح البلاغ فوراً لفريق الصيانة
-                </span>
+                <span>لا، لم يتم الإصلاح</span>
               </button>
             </div>
           </div>
 
           {/* Step 2: Star Rating */}
           <div className="flex flex-col gap-1.5">
-            <label className="font-bold text-slate-900">2. تقييم مستوى خدمة الصيانة (1 إلى 5 نجوم):</label>
+            <label className="font-bold text-slate-900">تقييم الخدمة:</label>
             <div className="flex items-center justify-center gap-2 bg-slate-50 border border-slate-200 rounded-xl py-2.5">
               {[1, 2, 3, 4, 5].map((star) => (
                 <button
@@ -466,8 +460,8 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
           <div className="flex flex-col gap-2">
             <label className="font-bold text-slate-900">
               {isFixed
-                ? '3. ملاحظات التقييم أو صورة بعد الإصلاح (اختياري):'
-                : '3. سبب رفض الإغلاق وصورة تثبت بقاء العطل (إلزامي لإعادة الفتح):'}
+                ? 'ملاحظات وصورة (اختياري):'
+                : 'سبب الرفض وصورة العطل (إلزامي):'}
             </label>
 
             <div className="flex gap-2">
@@ -505,8 +499,8 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
                 required={!isFixed}
                 placeholder={
                   isFixed
-                    ? 'مثال: تم الإصلاح بشكل ممتاز وتغيير القطعة التالفة...'
-                    : 'اشرح ما لم يتم إصلاحه ليظهر لفريق الصيانة عند إعادة فتح البلاغ...'
+                    ? 'ملاحظات...'
+                    : 'سبب رفض الإغلاق...'
                 }
                 rows={3}
                 className="flex-1 bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 focus:bg-white focus:border-blue-500 focus:outline-none"
@@ -519,7 +513,7 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
             <div className="bg-blue-50 border-2 border-blue-300 rounded-2xl p-3.5 flex flex-col gap-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-bold text-blue-950 text-xs">
-                  4. رفع تقييم الخدمة في نماذج الجامعة (إلزامي لتأكيد إغلاق كل بلاغ):
+                  نموذج تقييم الخدمة بالجامعة:
                 </span>
                 {ticket?.maximoNumber && (
                   <button
@@ -541,12 +535,6 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
                 )}
               </div>
 
-              <p className="text-[11px] text-blue-900 leading-relaxed">
-                لإغلاق البلاغ نهائياً، يرجى الدخول إلى رابط التقييم المعتمد وإدخال{' '}
-                <strong>رقم البلاغ ({ticket?.maximoNumber || 'المرتبط بالمرفق'})</strong>{' '}
-                واختيار الحالة <strong>«مكتمل»</strong>، ثم تأكيد الإرسال أدناه:
-              </p>
-
               <a
                 href={KSU_SERVICE_EVALUATION_URL}
                 target="_blank"
@@ -554,7 +542,7 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
                 className="w-full py-2.5 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 shadow-xs transition"
               >
                 <ExternalLink className="w-4 h-4" />
-                <span>فتح رابط رفع تقييم الخدمة (forms.ksu.edu.sa)</span>
+                <span>فتح نموذج تقييم الخدمة (forms.ksu.edu.sa)</span>
               </a>
 
               <label className="flex items-start gap-2.5 bg-white border border-blue-200 rounded-xl p-2.5 cursor-pointer select-none">
@@ -565,7 +553,7 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
                   className="mt-0.5 rounded border-slate-400"
                 />
                 <span className="text-xs font-bold text-slate-900 leading-snug">
-                  أؤكد أنه تم رفع تقييم الخدمة عبر رابط نماذج الجامعة أعلاه وإدخال رقم البلاغ وبحالة (مكتمل)
+                  تم رفع التقييم برقم البلاغ بحالة (مكتمل)
                 </span>
               </label>
             </div>
@@ -585,12 +573,12 @@ export const EvaluationGateModal: React.FC<EvaluationGateModalProps> = ({
             ) : isFixed ? (
               <>
                 <CheckCircle2 className="w-4 h-4" />
-                <span>اعتماد الإغلاق النهائي وفتح النظام للبلاغات الجديدة</span>
+                <span>اعتماد إغلاق البلاغ</span>
               </>
             ) : (
               <>
                 <XCircle className="w-4 h-4" />
-                <span>رفض الإغلاق الصوري وإعادة فتح البلاغ للصيانة</span>
+                <span>رفض الإغلاق وإعادة فتح البلاغ</span>
               </>
             )}
           </button>

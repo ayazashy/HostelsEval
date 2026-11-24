@@ -446,16 +446,15 @@ export const LeadersKPIDashboard: React.FC<LeadersKPIDashboardProps> = ({
     <div className="max-w-7xl mx-auto flex flex-col gap-6 pb-20 md:pb-8">
       {/* Read-Only Account Notice Banner */}
       {isReadOnlyViewer && (
-        <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-3.5 px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-indigo-950">
-          <div className="flex items-center gap-2.5">
+        <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-3 px-4 flex items-center justify-between gap-2 text-xs text-indigo-950">
+          <div className="flex items-center gap-2">
             <Eye className="w-4 h-4 text-indigo-600 shrink-0" />
-            <span>
-              مرحباً <strong>{viewerName || 'متابع الأداء والمؤشرات'}</strong> — أنت تتصفح النظام بحساب{' '}
-              <strong>متابعة الأداء ومؤشرات رواد المباني (عرض فقط بدون صلاحيات تعديل)</strong>.
+            <span className="font-bold">
+              {viewerName || 'متابعة المؤشرات'}
             </span>
           </div>
           <span className="px-2.5 py-1 rounded-lg bg-indigo-100 text-indigo-800 font-bold text-[11px] shrink-0">
-            صلاحية قراءة ورقابة فقط • Read-Only KPI View
+            عرض فقط
           </span>
         </div>
       )}
@@ -463,16 +462,10 @@ export const LeadersKPIDashboard: React.FC<LeadersKPIDashboardProps> = ({
       {/* Header + Time Period Controls */}
       <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
-          <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 text-[11px] font-bold mb-2">
-            <BarChart3 className="w-3.5 h-3.5" />
-            <span>قياس الأداء والمسح الشامل لمرافق المباني الـ 34</span>
-          </div>
-          <h2 className="text-lg sm:text-xl font-bold text-slate-900">
-            مؤشرات أداء رواد المباني (KPI) ونسب إتمام المسح الشامل
+          <h2 className="text-lg sm:text-xl font-bold text-slate-900 flex items-center gap-2">
+            <BarChart3 className="w-5 h-5 text-blue-600" />
+            <span>مؤشرات أداء رواد المباني ونسب المسح الشامل</span>
           </h2>
-          <p className="text-xs text-slate-500 mt-1">
-            المستهدف الأساسي: قيام كل رائد مبنى بفحص ومسح جميع مرافق المبنى (100% Full Scan) لمرة واحدة على الأقل، مع متابعة نشاطه الدوري واعتماد بلاغات الصيانة والنظافة.
-          </p>
         </div>
 
         {/* Period Filter Selector */}
@@ -654,14 +647,9 @@ export const LeadersKPIDashboard: React.FC<LeadersKPIDashboardProps> = ({
       {/* Visual Matrix of All 34 Buildings Full-Scan Progress */}
       <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col gap-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div>
-            <h3 className="text-sm font-bold text-slate-900">
-              المخطط البصري لنسب إتمام المسح الشامل للمباني الـ 34
-            </h3>
-            <p className="text-[11px] text-slate-500">
-              اضغط على أي مبنى لاستعراض تفاصيله الميدانية. الألوان توضح نسبة تغطية رائد المبنى لجميع مرافق مبناه.
-            </p>
-          </div>
+          <h3 className="text-sm font-bold text-slate-900">
+            نسب إتمام المسح للمباني (34)
+          </h3>
           <div className="flex flex-wrap items-center gap-3 text-[11px] font-bold">
             <span className="flex items-center gap-1.5 text-emerald-700">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
@@ -832,14 +820,14 @@ export const LeadersKPIDashboard: React.FC<LeadersKPIDashboardProps> = ({
             <thead className="bg-slate-50 text-slate-700 border-b border-slate-200 font-bold">
               <tr>
                 <th className="p-3">#</th>
-                <th className="p-3">المبنى ورائد المبنى</th>
-                <th className="p-3 min-w-[210px]">
-                  الهدف الأساسي: المسح الشامل للمبنى (Full Scan)
+                <th className="p-3">المبنى والرائد</th>
+                <th className="p-3 min-w-[180px]">
+                  نسبة المسح الشامل
                 </th>
                 <th className="p-3 min-w-[165px]">تغطية الأدوار (1..5)</th>
-                <th className="p-3">النشاط في ({periodLabelAr})</th>
-                <th className="p-3">التوثيق بالصور والمتابعة</th>
-                <th className="p-3">مؤشر الأداء العام (KPI)</th>
+                <th className="p-3">النشاط ({periodLabelAr})</th>
+                <th className="p-3">التوثيق والمتابعة</th>
+                <th className="p-3">مؤشر الأداء</th>
                 <th className="p-3">آخر نشاط</th>
                 <th className="p-3 text-center">التفاصيل</th>
               </tr>
@@ -1012,12 +1000,8 @@ export const LeadersKPIDashboard: React.FC<LeadersKPIDashboardProps> = ({
                       {/* Last Activity Date */}
                       <td className="p-3 font-mono text-[11px] text-slate-500">
                         {row.lastActivityIso
-                          ? new Date(row.lastActivityIso).toLocaleDateString('ar-SA', {
-                              year: 'numeric',
-                              month: 'short',
-                              day: 'numeric',
-                            })
-                          : 'لا يوجد'}
+                          ? row.lastActivityIso.slice(0, 10).replace(/-/g, '/')
+                          : '—'}
                       </td>
 
                       {/* Inspect Building Details Action */}

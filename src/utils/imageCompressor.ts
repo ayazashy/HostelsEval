@@ -154,6 +154,40 @@ export function estimateFacilityMediaShards(items: Array<{ url?: string }>): {
   };
 }
 
+/**
+ * Formats any Date, ISO string, or timestamp into a standardized Gregorian date
+ * using pure English ASCII digits: `YYYY/MM/DD` (or `YYYY/MM/DD - HH:MM` when includeTime is true).
+ * Prevents mixed Hijri/Gregorian calendars or Arabic-Indic numerals across different user devices.
+ */
+export function formatStandardDate(
+  input?: Date | string | number,
+  includeTime: boolean = false
+): string {
+  const d = input !== undefined ? new Date(input) : new Date();
+  const validDate = Number.isNaN(d.getTime()) ? new Date() : d;
+
+  const yyyy = validDate.getFullYear();
+  const mm = String(validDate.getMonth() + 1).padStart(2, '0');
+  const dd = String(validDate.getDate()).padStart(2, '0');
+  const datePart = `${yyyy}/${mm}/${dd}`;
+
+  if (!includeTime) {
+    return datePart;
+  }
+
+  const hh = String(validDate.getHours()).padStart(2, '0');
+  const min = String(validDate.getMinutes()).padStart(2, '0');
+  return `${datePart} - ${hh}:${min}`;
+}
+
+export function formatStandardTime(input?: Date | string | number): string {
+  const d = input !== undefined ? new Date(input) : new Date();
+  const validDate = Number.isNaN(d.getTime()) ? new Date() : d;
+  const hh = String(validDate.getHours()).padStart(2, '0');
+  const min = String(validDate.getMinutes()).padStart(2, '0');
+  return `${hh}:${min}`;
+}
+
 function renderWatermarkedCanvasToBase64(
   img: HTMLImageElement,
   maxDimension: number,
@@ -190,20 +224,8 @@ function renderWatermarkedCanvasToBase64(
   ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
   ctx.fillRect(0, height - bannerHeight, width, bannerHeight);
 
-  const now = new Date();
-  const dateStr = now.toLocaleDateString('ar-SA', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
-  const timeStr = now.toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true,
-  });
-
   const idText = metadata?.fixtureId ? metadata.fixtureId : 'HostelsEval';
-  const timeText = `${dateStr} - ${timeStr}`;
+  const timeText = formatStandardDate(new Date(), true);
 
   ctx.font = 'bold 11px "Inter", "Segoe UI", Tahoma, sans-serif';
   ctx.fillStyle = '#ffffff';

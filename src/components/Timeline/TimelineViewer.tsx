@@ -10,6 +10,7 @@ import {
   resolveTimelineIssue,
   fetchFacilityMediaOnDemand,
 } from '../../services/firestoreService';
+import { formatStandardDate, formatStandardTime } from '../../utils/imageCompressor';
 import {
   Clock,
   CheckCircle2,
@@ -184,11 +185,8 @@ export const TimelineViewer: React.FC<TimelineViewerProps> = ({
           </div>
           <div>
             <h3 className="text-sm font-bold text-slate-900">
-              سجل الفحوصات وتتبع الملاحظات {buildingId ? `• المبنى ${buildingId}` : ''}
+              سجل الفحوصات {buildingId ? `• المبنى ${buildingId}` : ''}
             </h3>
-            <p className="text-xs text-slate-500">
-              توثيق زمني مستمر لجميع عمليات الفحص والتسريبات ومتابعة المعالجة
-            </p>
           </div>
         </div>
 
@@ -244,21 +242,13 @@ export const TimelineViewer: React.FC<TimelineViewerProps> = ({
       {filteredEntries.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center text-slate-500 shadow-sm">
           <Clock className="w-10 h-10 mx-auto text-slate-300 mb-2" />
-          <p className="text-sm font-bold text-slate-700">لا توجد سجلات مسجلة مطابقة حتى الآن</p>
-          <p className="text-xs text-slate-500 mt-1">
-            عند حفظ أي فحص عبر استمارة الفحص الميداني، سيتم تسجيله هنا تلقائياً بتوقيته لمتابعة الإصلاحات.
-          </p>
+          <p className="text-sm font-bold text-slate-700">لا توجد سجلات</p>
         </div>
       ) : (
         <div className="relative border-r-2 border-slate-200 pr-5 mr-3 flex flex-col gap-4">
           {filteredEntries.map((entry) => {
-            const dateObj = new Date(entry.timestamp);
-            const timeStr = dateObj.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
-            const dateStr = dateObj.toLocaleDateString('ar-SA', {
-              year: 'numeric',
-              month: 'short',
-              day: 'numeric',
-            });
+            const timeStr = formatStandardTime(entry.timestamp);
+            const dateStr = formatStandardDate(entry.timestamp);
 
             const isOperational = entry.status === 'operational';
             const hasLeaks = entry.defects.includes('leak');
@@ -418,7 +408,7 @@ export const TimelineViewer: React.FC<TimelineViewerProps> = ({
                         )}
                         {entry.resolvedAt && (
                           <span className="text-slate-400 font-mono text-[11px]">
-                            {new Date(entry.resolvedAt).toLocaleDateString('ar-SA')}
+                            {formatStandardDate(entry.resolvedAt)}
                           </span>
                         )}
                       </div>

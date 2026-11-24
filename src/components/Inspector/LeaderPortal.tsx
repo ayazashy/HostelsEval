@@ -15,6 +15,7 @@ import {
   addNewFacilityCategory,
   getZonesForFloor,
   getZoneNameAr,
+  inferStandardFixtureCodeFromArabicName,
 } from '../../config/facilityTemplates';
 import { FixtureCard } from './FixtureCard';
 import { EvaluationGateModal } from './EvaluationGateModal';
@@ -234,6 +235,8 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
             floor: selectedFloor,
             categoryCode: activeCategory.code,
             fixtureTypeCode: tmpl.typeCode,
+            fixtureNameAr: tmpl.nameAr,
+            fixtureNameEn: tmpl.nameEn,
             fixtureIndex: idx,
             status: 'operational',
             defects: [],
@@ -251,16 +254,19 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
     onRefreshEvaluations();
   };
 
-  // Super Simple Quick Add Handler (Auto-generates code so user only types Arabic name)
+  // Super Simple Quick Add Handler (Maps Arabic name to semantic code — never generates gibberish FX***)
   const handleQuickAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (quickAddMode === 'item') {
       if (!newItemNameAr.trim()) return;
-      const autoCode = `FX${Date.now().toString(36).slice(-3).toUpperCase()}`;
+      const inferred = inferStandardFixtureCodeFromArabicName(
+        newItemNameAr.trim(),
+        activeCategory.code
+      );
       const updated = addNewFacilityItem({
         categoryCode: activeCategory.code,
         nameAr: newItemNameAr.trim(),
-        typeCode: autoCode,
+        typeCode: inferred.code,
         count: Math.max(1, Math.min(20, Number(newItemCount) || 1)),
         wings: applyToAllWings ? [1, 2, 3, 4] : [selectedWing],
       });
@@ -270,7 +276,7 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
       setShowQuickAddModal(false);
     } else {
       if (!newCatNameAr.trim()) return;
-      const autoCatCode = `C${Date.now().toString(36).slice(-3).toUpperCase()}`;
+      const autoCatCode = 'ZNE';
       const updated = addNewFacilityCategory({
         code: autoCatCode,
         nameAr: newCatNameAr.trim(),
@@ -294,10 +300,10 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
             </div>
             <div>
               <h3 className="text-sm font-bold flex items-center gap-1.5">
-                <span>مطلوب تقييم الخدمة لإغلاق البلاغات ({pendingEvaluationTickets.length} بلاغ)</span>
+                <span>بلاغات مغلقة بانتظار التقييم ({pendingEvaluationTickets.length})</span>
               </h3>
               <p className="text-xs text-purple-100 mt-0.5 leading-relaxed">
-                قام فريق الصيانة بإغلاق {pendingEvaluationTickets.length} بلاغ في {currentBuilding.nameAr}. يلزم تقييم الخدمة والتأكد من الإصلاح الفعلي قبل فتح أو تعديل أي بلاغات جديدة.
+                يلزم معاينة الإصلاح وتقييم الخدمة لفتح بلاغات جديدة.
               </p>
             </div>
           </div>
@@ -308,7 +314,7 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
             className="w-full sm:w-auto px-4 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-xl text-xs font-black transition shrink-0 flex items-center justify-center gap-1.5 shadow-sm"
           >
             <Star className="w-4 h-4 fill-slate-950" />
-            <span>تقييم البلاغات المغلقة الآن</span>
+            <span>تقييم البلاغات</span>
           </button>
         </div>
       )}
@@ -354,7 +360,7 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
             </select>
           ) : (
             <span className="bg-blue-50 border border-blue-200 text-blue-900 text-xs rounded-xl px-3 py-2 font-bold">
-              صلاحية حصرية: {currentBuilding.nameAr} ({currentBuilding.id})
+              {currentBuilding.nameAr} ({currentBuilding.id})
             </span>
           )}
 
@@ -627,7 +633,7 @@ export const LeaderPortal: React.FC<LeaderPortalProps> = ({
               className="w-full py-3.5 border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-2xl bg-white hover:bg-blue-50/40 text-slate-700 hover:text-blue-700 text-xs font-bold flex items-center justify-center gap-2 transition"
             >
               <Plus className="w-4 h-4 text-blue-600" />
-              <span>إضافة مرفق أو تجهيز جديد لهذا القسم ({activeCategory.nameAr})</span>
+              <span>إضافة مرفق في ({activeCategory.nameAr})</span>
             </button>
           )}
         </>

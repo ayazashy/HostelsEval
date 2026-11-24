@@ -6,6 +6,7 @@ import React, { useState } from 'react';
 import { BuildingInfo, FixtureEvaluation } from '../../types/hostel';
 import { computeCampusStats } from '../../utils/healthScore';
 import { fetchFacilityMediaOnDemand } from '../../services/firestoreService';
+import { formatStandardDate } from '../../utils/imageCompressor';
 import { ImageViewerModal, MediaGalleryEntry } from '../Common/ImageViewerModal';
 import {
   Printer,
@@ -106,12 +107,7 @@ export const OfficialReportModal: React.FC<OfficialReportModalProps> = ({
     : allEvaluations;
 
   const stats = computeCampusStats(visibleBuildings, visibleEvaluations);
-  const now = new Date();
-  const dateStr = now.toLocaleDateString('ar-SA', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
+  const dateStr = formatStandardDate(new Date());
 
   const handlePrint = () => {
     window.print();
@@ -190,16 +186,11 @@ export const OfficialReportModal: React.FC<OfficialReportModalProps> = ({
             <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200">
               <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 text-amber-600" />
-                <span>ملخص تنفيذي للمسؤولين:</span>
+                <span>ملخص حالة المرافق:</span>
               </h3>
-              <p className="text-xs leading-relaxed text-slate-700">
-                تم إجراء هذا المسح الميداني لرصد الأعطال الهيكلية والتشغيلية في دورات المياه
-                ومرافق الإسكان (34 مبنى يضم كل منها 4 أجنحة). أظهرت البيانات الرقمية الموثقة وجود أعطال
-                تؤثر على جودة البيئة السكنية للطلاب، وتتسبب في تسربات مائية تستدعي تدخلاً عاجلاً من فرق الصيانة.
-              </p>
 
-              {/* Shock Stats in Report */}
-              <div className="grid grid-cols-3 gap-3 mt-4 pt-3 border-t border-slate-200 text-center">
+              {/* Key Stats in Report */}
+              <div className="grid grid-cols-3 gap-3 pt-1 text-center">
                 <div>
                   <span className="text-xs text-slate-500 block">
                     تسريبات المياه النشطة

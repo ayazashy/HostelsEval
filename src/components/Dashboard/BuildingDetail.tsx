@@ -194,11 +194,11 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition flex items-center gap-2 shadow-sm"
             >
               <ClipboardEdit className="w-4 h-4" />
-              <span>تسجيل فحص ميداني</span>
+              <span>فحص المرافق</span>
             </button>
           ) : isViewerOnly ? (
-            <span className="px-3.5 py-2 bg-indigo-50 border border-indigo-200 text-indigo-800 text-xs font-bold rounded-xl">
-              وضع متابعة المؤشرات (عرض فقط)
+            <span className="px-3 py-1.5 bg-indigo-50 border border-indigo-200 text-indigo-800 text-xs font-bold rounded-xl">
+              عرض فقط
             </span>
           ) : (
             onOpenLogin && (
@@ -207,7 +207,7 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition flex items-center gap-2 shadow-sm"
               >
                 <Lock className="w-4 h-4 text-blue-200" />
-                <span>دخول رائد المبنى للتفتيش</span>
+                <span>دخول رائد المبنى</span>
               </button>
             )
           )}
@@ -220,9 +220,6 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
           <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
             <span>مجسم المبنى (3D)</span>
           </h2>
-          <span className="text-xs text-slate-500">
-            انقر على أي جناح لمعاينته
-          </span>
         </div>
 
         <Building3DViewer
@@ -324,20 +321,17 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
         </div>
       </div>
 
-      {/* Photo Evidence Gallery & Timeline — Restricted Strictly to Authorized Roles (Never Public!) */}
-      {canViewSensitiveDetails ? (
+      {/* Photo Evidence Gallery & Timeline — Shown only when authorized (No justification filler when unauthorized) */}
+      {canViewSensitiveDetails && (
         <>
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col gap-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Camera className="w-5 h-5 text-slate-600" />
                 <h3 className="text-base font-bold text-slate-900">
-                  الصور التوثيقية لهذا المبنى ({photoEvaluations.length} صورة)
+                  صور البلاغات ({photoEvaluations.length})
                 </h3>
               </div>
-              <span className="text-xs text-slate-500">
-                مختومة بالرقم الفريد والتاريخ
-              </span>
             </div>
 
             {photoEvaluations.length === 0 ? (
@@ -432,18 +426,6 @@ export const BuildingDetail: React.FC<BuildingDetailProps> = ({
             />
           )}
         </>
-      ) : (
-        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm text-center flex flex-col items-center gap-2.5">
-          <div className="w-11 h-11 rounded-2xl bg-slate-100 text-slate-600 flex items-center justify-center">
-            <Lock className="w-5 h-5" />
-          </div>
-          <h3 className="text-sm font-bold text-slate-900">
-            الصور الميدانية وسجل الفحص التفصيلي محمية ومخصصة للمسؤولين فقط
-          </h3>
-          <p className="text-xs text-slate-500 max-w-md">
-            حفاظاً على الخصوصية وسرية بيانات المباني، لا تُعرض الصور التوثيقية أو تفاصيل الفاحصين وسجل الملاحظات للزوار العامين أو لغير مسؤولي هذا المبنى.
-          </p>
-        </div>
       )}
     </div>
   );

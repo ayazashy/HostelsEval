@@ -169,6 +169,8 @@ export interface FixtureEvaluation {
   floor: number; // 1..5
   categoryCode: FacilityCategoryCode;
   fixtureTypeCode: FixtureTypeCode;
+  fixtureNameAr?: string;
+  fixtureNameEn?: string;
   fixtureIndex: number;
   status: FixtureStatus;
   defects: string[];

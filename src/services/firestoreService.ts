@@ -26,7 +26,11 @@ import {
   FacilityMediaVaultDoc,
   MaintenanceTicketInfo,
 } from '../types/hostel';
-import { resolveEvaluationDepartment, isCleaningOrPestTicket } from '../config/facilityTemplates';
+import {
+  resolveEvaluationDepartment,
+  isCleaningOrPestTicket,
+  resolveFixtureDisplayName,
+} from '../config/facilityTemplates';
 import {
   getDecodedSecurityCode,
   getAdminRawSecurityCode,
@@ -1723,7 +1727,9 @@ export async function saveEvaluation(
     wingId: strippedEvaluation.wingId,
     categoryCode: strippedEvaluation.categoryCode,
     fixtureTypeCode: strippedEvaluation.fixtureTypeCode,
-    fixtureNameAr: strippedEvaluation.fixtureTypeCode,
+    fixtureNameAr:
+      strippedEvaluation.fixtureNameAr ||
+      resolveFixtureDisplayName(strippedEvaluation).nameAr,
     status: strippedEvaluation.status,
     defects: strippedEvaluation.defects || [],
     notes: newHistoryEvent.notes,
@@ -2329,8 +2335,8 @@ export async function fetchAllEvaluations(): Promise<FixtureEvaluation[]> {
   return runWithNetworkProgress(
     {
       direction: 'download',
-      titleAr: 'جاري تحميل بيانات البلاغات والمرافق (بدون المرفقات الثقيلة)...',
-      detailAr: 'وضع التحميل السريع الموفر للذاكرة (On-Demand Media)',
+      titleAr: 'جاري مزامنة البلاغات...',
+      detailAr: 'مزامنة سحابية',
       estimatedDurationMs: 1100,
     },
     async (updateProgress) => {
@@ -2764,7 +2770,7 @@ export function getBuildingTimeline(buildingId?: string): EvaluationHistoryEntry
             wingId: ev.wingId,
             categoryCode: ev.categoryCode,
             fixtureTypeCode: ev.fixtureTypeCode,
-            fixtureNameAr: ev.fixtureTypeCode,
+            fixtureNameAr: ev.fixtureNameAr || resolveFixtureDisplayName(ev).nameAr,
             status: h.status,
             defects: h.defects || [],
             notes: h.notes,

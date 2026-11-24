@@ -20,7 +20,7 @@ import {
   isCleaningOrPestTicket,
   getZoneNameAr,
   getZoneNameEn,
-  getFixtureTypeFilterLabel,
+  resolveFixtureDisplayName,
 } from '../../config/facilityTemplates';
 import {
   updateMaximoTicketInfo,
@@ -29,7 +29,11 @@ import {
   appendFacilityChatMessage,
   fetchFacilityMediaOnDemand,
 } from '../../services/firestoreService';
-import { processFacilityMediaFile, compressAndWatermarkImage } from '../../utils/imageCompressor';
+import {
+  processFacilityMediaFile,
+  compressAndWatermarkImage,
+  formatStandardDate,
+} from '../../utils/imageCompressor';
 import { ImageViewerModal, MediaGalleryEntry } from '../Common/ImageViewerModal';
 import { OnDemandPhotoSlot } from '../Common/OnDemandPhotoSlot';
 import {
@@ -320,18 +324,12 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
   const categories = React.useMemo(() => loadActiveFacilityCategories(), []);
 
   const getFixtureBilingualName = React.useCallback(
-    (item: FixtureEvaluation): { ar: string; en: string } => {
-      const cat = categories.find((c) => c.code === item.categoryCode);
-      const tmpl =
-        cat?.wingTemplates[item.wingId]?.find((t) => t.typeCode === item.fixtureTypeCode) ||
-        cat?.wingTemplates[1]?.find((t) => t.typeCode === item.fixtureTypeCode);
+    (item: FixtureEvaluation): { ar: string; en: string; code: string } => {
+      const resolved = resolveFixtureDisplayName(item, categories);
       return {
-        ar: tmpl
-          ? `${tmpl.nameAr} (#${item.fixtureIndex})`
-          : `${item.fixtureTypeCode} (#${item.fixtureIndex})`,
-        en: tmpl
-          ? `${tmpl.nameEn} (#${item.fixtureIndex})`
-          : `${item.fixtureTypeCode} (#${item.fixtureIndex})`,
+        code: resolved.code,
+        ar: `${resolved.nameAr} (#${item.fixtureIndex})`,
+        en: `${resolved.nameEn} (#${item.fixtureIndex})`,
       };
     },
     [categories]
@@ -404,7 +402,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
     return hasStartedMaintenanceAction(item) ? 'in_progress' : 'new';
   };
 
-  // Fixture Type options with counts filtered by active track & department
+  // Fixture Type options with counts filtered by active track & department (normalized so FX*** codes never appear)
   const fixtureTypeOptions = React.useMemo(() => {
     const map = new Map<string, { code: string; ar: string; en: string; count: number }>();
     for (const item of trackTickets) {
@@ -414,13 +412,18 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
       ) {
         continue;
       }
-      const code = (item.fixtureTypeCode || 'OTH').toUpperCase();
-      const labels = getFixtureTypeFilterLabel(code, categories);
+      const resolved = resolveFixtureDisplayName(item, categories);
+      const code = resolved.code;
       const existing = map.get(code);
       if (existing) {
         existing.count += 1;
       } else {
-        map.set(code, { code, ar: labels.ar, en: labels.en, count: 1 });
+        map.set(code, {
+          code,
+          ar: resolved.filterLabelAr,
+          en: resolved.filterLabelEn,
+          count: 1,
+        });
       }
     }
     return Array.from(map.values()).sort((a, b) => b.count - a.count);
@@ -439,7 +442,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
       }
       if (
         selectedFixtureType !== 'ALL' &&
-        (t.fixtureTypeCode || '').toUpperCase() !== selectedFixtureType
+        resolveFixtureDisplayName(t, categories).code !== selectedFixtureType
       ) {
         continue;
       }
@@ -458,7 +461,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
       verified,
       total: newTickets + inProgress + reopened + pendingEval + verified,
     };
-  }, [trackTickets, selectedDepartment, selectedFixtureType]);
+  }, [trackTickets, selectedDepartment, selectedFixtureType, categories]);
 
   const filteredTickets = React.useMemo(() => {
     return trackTickets.filter((item) => {
@@ -471,7 +474,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
 
       if (
         selectedFixtureType !== 'ALL' &&
-        (item.fixtureTypeCode || '').toUpperCase() !== selectedFixtureType
+        resolveFixtureDisplayName(item, categories).code !== selectedFixtureType
       ) {
         return false;
       }
@@ -507,6 +510,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
     statusFilter,
     searchQuery,
     getFixtureBilingualName,
+    categories,
   ]);
 
   const handleStartTicketWork = async (item: FixtureEvaluation) => {
@@ -772,7 +776,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
       {isAdmin && (
         <div className="bg-slate-900 text-white rounded-2xl p-3 flex flex-wrap items-center justify-between gap-2">
           <span className="text-xs font-bold text-slate-300">
-            وضع المشرف العام — اختر البوابة المراد استعراضها:
+            البوابة:
           </span>
           <div className="flex items-center gap-2">
             <button
@@ -785,7 +789,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                 !isCleaningMode ? 'bg-emerald-500 text-slate-950' : 'bg-white/10 text-white'
               }`}
             >
-              بوابة الصيانة المكثفة وماكسمو (4 أقسام)
+              الصيانة وماكسمو
             </button>
             <button
               type="button"
@@ -797,7 +801,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                 isCleaningMode ? 'bg-sky-400 text-slate-950' : 'bg-white/10 text-white'
               }`}
             >
-              بوابة النظافة ومكافحة الحشرات والقوارض
+              النظافة ومكافحة الآفات
             </button>
           </div>
         </div>
@@ -816,14 +820,11 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
           <div>
             <h1 className="text-base sm:text-lg font-bold text-slate-900">
               {isCleaningMode
-                ? 'بوابة الخدمات: النظافة ومكافحة الحشرات والقوارض (Cleaning & Pest Control)'
-                : 'بوابة الصيانة المكثفة ونظام ماكسمو (Intensive Maintenance & Maximo)'}
+                ? 'بوابة النظافة ومكافحة الآفات'
+                : 'بوابة الصيانة وماكسمو'}
             </h1>
             <p className="text-xs text-slate-500 mt-0.5">
-              المسؤول النشط: <strong className="text-slate-800">{technicianName}</strong> •{' '}
-              {isCleaningMode
-                ? 'معالجة بلاغات النظافة والحشرات والقوارض وإرفاق صورة الإنجاز لاعتماد رائد المبنى'
-                : 'فلترة الأقسام الأربعة، عرض ثنائي اللغة (عربي / English)، وإرفاق صورة الإصلاح لاعتماد الرائد'}
+              المسؤول: <strong className="text-slate-800">{technicianName}</strong>
             </p>
           </div>
         </div>
@@ -908,7 +909,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
           <div className="flex items-center justify-between flex-wrap gap-2">
             <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
               <Filter className="w-3.5 h-3.5 text-blue-600" />
-              <span>تصفية حسب نوع المرفق (المراوش، المراحيض، المغاسل، ...):</span>
+              <span>نوع المرفق:</span>
             </span>
             {selectedFixtureType !== 'ALL' && (
               <button
@@ -916,7 +917,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                 onClick={() => setSelectedFixtureType('ALL')}
                 className="text-[11px] font-bold text-blue-700 hover:underline"
               >
-                إظهار جميع أنواع المرافق
+                عرض الكل
               </button>
             )}
           </div>
@@ -1078,10 +1079,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
         <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center text-slate-500">
           <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
           <p className="text-sm font-bold text-slate-800">
-            لا توجد بلاغات مطابقة للفلتر المحدد / No Matching Tickets
-          </p>
-          <p className="text-xs text-slate-500 mt-1">
-            أي مرفق يسجله رائد المبنى كغير سليم يظهر هنا تلقائياً مع موقع المرفق وصورة العطل والترجمة الإنجليزية.
+            لا توجد بلاغات مطابقة
           </p>
         </div>
       ) : (
@@ -1286,7 +1284,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                   {(beforeSlotsMeta.length > 0 || hasAfterMedia) && (
                     <div className="flex flex-col gap-1.5 pt-1">
                       <span className="text-[11px] font-bold text-slate-500">
-                        صور وشواهد المرفق ({beforeSlotsMeta.length + (hasAfterMedia ? 1 : 0)} — اضغط على أي صورة للتحميل والمعاينة):
+                        المرفقات ({beforeSlotsMeta.length + (hasAfterMedia ? 1 : 0)}):
                       </span>
                       <div className="flex flex-wrap items-center gap-2">
                         {beforeSlotsMeta.map((slot, idx) => {
@@ -1390,7 +1388,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                               [item.id]: e.target.value,
                             }))
                           }
-                          placeholder="رابط البلاغ في ماكسمو (https://...) — يظهر مباشرة لرائد المبنى"
+                          placeholder="رابط البلاغ في ماكسمو (https://...)"
                           className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-[11px] font-mono text-slate-900 focus:border-blue-500 focus:outline-none text-left min-w-0"
                         />
                         {ticket?.maximoUrl && (
@@ -1461,8 +1459,8 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                       <PlayCircle className="w-4 h-4" />
                       <span>
                         {startingTicketId === item.id
-                          ? 'جاري التحويل لقيد العمل...'
-                          : 'استلام البلاغ وبدء العمل عليه (تحويل لـ يتم العمل عليها)'}
+                          ? 'جاري التحويل...'
+                          : 'بدء العمل على البلاغ'}
                       </span>
                     </button>
                   )}
@@ -1472,7 +1470,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 pt-1">
                       <span className="text-[11px] font-bold text-purple-800 flex items-center gap-1">
                         <Clock className="w-3.5 h-3.5 text-purple-600" />
-                        <span>مغلق — بانتظار معاينة واعتماد رائد {item.buildingId}</span>
+                        <span>بانتظار اعتماد رائد {item.buildingId}</span>
                       </span>
 
                       <button
@@ -1483,12 +1481,12 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                         {copiedLinkId === item.id ? (
                           <>
                             <Check className="w-3.5 h-3.5" />
-                            <span>تم نسخ رابط الاعتماد</span>
+                            <span>تم النسخ</span>
                           </>
                         ) : (
                           <>
                             <Link2 className="w-3.5 h-3.5" />
-                            <span>نسخ رابط الاعتماد لرائد المبنى</span>
+                            <span>نسخ رابط الاعتماد</span>
                           </>
                         )}
                       </button>
@@ -1498,7 +1496,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                       <div className="flex items-center justify-between gap-2">
                         <span className="flex items-center gap-1.5">
                           <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                          <span>تم اعتماد الإغلاق من رائد المبنى ({ticket?.verifiedBy})</span>
+                          <span>معتمد من رائد المبنى ({ticket?.verifiedBy})</span>
                         </span>
                         {ticket?.serviceRating && (
                           <span className="flex items-center gap-1 text-amber-600">
@@ -1510,7 +1508,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                       {ticket?.ksuEvaluationConfirmed && (
                         <span className="text-[11px] text-emerald-700 flex items-center gap-1">
                           <Check className="w-3.5 h-3.5" />
-                          <span>تم تأكيد رفع تقييم الخدمة في نماذج الجامعة (مكتمل)</span>
+                          <span>تم تقييم الخدمة (مكتمل)</span>
                         </span>
                       )}
                     </div>
@@ -1522,7 +1520,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                     >
                       <Camera className="w-4 h-4" />
                       <span>
-                        إرفاق صورة الإصلاح وإغلاق البلاغ (Attach Fix Photo & Close)
+                        إغلاق البلاغ وإرفاق صورة الإصلاح
                       </span>
                     </button>
                   )}
@@ -1555,7 +1553,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
               <div>
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span>إرفاق صورة الإصلاح وإغلاق البلاغ (Close Ticket)</span>
+                  <span>إغلاق البلاغ</span>
                 </h3>
                 <p className="text-[11px] font-mono text-slate-500 mt-0.5">{closingItem.id}</p>
               </div>
@@ -1573,7 +1571,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                 <>
                   <div className="flex flex-col gap-1">
                     <label className="font-bold text-slate-700">
-                      رقم البلاغ في ماكسمو (Maximo Number - اختياري أو حسب النظام):
+                      رقم بلاغ ماكسمو:
                     </label>
                     <input
                       type="text"
@@ -1586,7 +1584,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
 
                   <div className="flex flex-col gap-1">
                     <label className="font-bold text-slate-700">
-                      رابط البلاغ في ماكسمو (يظهر لرائد المبنى عند المراجعة):
+                      رابط بلاغ ماكسمو:
                     </label>
                     <input
                       type="url"
@@ -1603,7 +1601,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
               {!isCleaningMode && !closingItem.maintenanceTicket?.maximoAttachmentBase64 && (
                 <div className="flex flex-col gap-1">
                   <label className="font-bold text-slate-700">
-                    مرفق البلاغ (PDF أو صورة من ماكسمو - اختياري):
+                    مرفق ماكسمو (PDF / صورة):
                   </label>
                   <label className="cursor-pointer border border-dashed border-slate-300 hover:border-blue-500 rounded-xl p-2.5 bg-slate-50 flex items-center justify-center gap-2 text-slate-700 font-bold">
                     <input
@@ -1616,7 +1614,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                     <span>
                       {closureAttachment
                         ? `تم إرفاق: ${closureAttachment.name}`
-                        : 'اختيار ملف PDF أو صورة البلاغ'}
+                        : 'اختيار ملف PDF أو صورة'}
                     </span>
                   </label>
                 </div>
@@ -1624,7 +1622,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
 
               <div className="flex flex-col gap-1.5">
                 <label className="font-bold text-slate-700">
-                  صورة المرفق بعد الإصلاح / التنظيف (Fix Photo for Leader Preview):
+                  صورة بعد الإصلاح:
                 </label>
                 {closurePhotoBase64 ? (
                   <div className="relative w-28 h-28 rounded-xl overflow-hidden border-2 border-emerald-500">
@@ -1651,19 +1649,19 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                       className="hidden"
                     />
                     <Camera className="w-5 h-5 text-emerald-600" />
-                    <span>التقاط أو إرفاق صورة بعد الإصلاح (After Photo)</span>
+                    <span>التقاط أو إرفاق صورة بعد الإصلاح</span>
                   </label>
                 )}
               </div>
 
               <div className="flex flex-col gap-1">
                 <label className="font-bold text-slate-700">
-                  ملاحظات الإغلاق (تظهر في محادثة المرفق لرائد المبنى):
+                  ملاحظات الإغلاق:
                 </label>
                 <textarea
                   value={closureNotes}
                   onChange={(e) => setClosureNotes(e.target.value)}
-                  placeholder="مثال: تم استبدال القطعة التالفة واختبار عدم وجود تسريب..."
+                  placeholder="تفاصيل الإصلاح..."
                   rows={2}
                   className="bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-slate-900 focus:bg-white focus:outline-none"
                 />
@@ -1677,8 +1675,8 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                 <CheckCircle2 className="w-4 h-4" />
                 <span>
                   {isSubmittingClosure
-                    ? 'جاري إغلاق البلاغ...'
-                    : 'تأكيد الإغلاق وتحويله لمعاينة واعتماد رائد المبنى'}
+                    ? 'جاري الإغلاق...'
+                    : 'تأكيد إغلاق البلاغ'}
                 </span>
               </button>
             </form>
@@ -1730,7 +1728,7 @@ export const MaintenancePortal: React.FC<MaintenancePortalProps> = ({
                       <div className="flex items-center justify-between text-[11px]">
                         <strong className="text-slate-900">{ev.actorName}</strong>
                         <span className="font-mono text-[10px] text-slate-500">
-                          {new Date(ev.timestamp).toLocaleString('ar-SA')}
+                          {formatStandardDate(ev.timestamp, true)}
                         </span>
                       </div>
                       {ev.notes && <p className="text-slate-700">{ev.notes}</p>}

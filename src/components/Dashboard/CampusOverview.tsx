@@ -151,16 +151,11 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
       {/* 1. HERO & 3D CAMPUS VISUALIZATION FOR ALL 34 BUILDINGS */}
       <section className="flex flex-col gap-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-blue-600 shrink-0" />
-              <h2 className="text-base font-bold text-slate-900">
-                خريطة مجمع الإسكان ({totalBuildingsCount} مبنى)
-              </h2>
-            </div>
-            <p className="text-xs text-slate-500 mt-1">
-              انقر على أي مبنى لمعاينة حالة المرافق وتفاصيل التقييم الميداني
-            </p>
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-blue-600 shrink-0" />
+            <h2 className="text-base font-bold text-slate-900">
+              خريطة مجمع الإسكان ({totalBuildingsCount} مبنى)
+            </h2>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
@@ -423,10 +418,10 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
               onChange={(e) => setSortBy(e.target.value as any)}
               className="bg-slate-50 border border-slate-300 text-slate-900 text-xs rounded-xl px-2.5 py-1.5 font-bold cursor-pointer"
             >
-              <option value="number">تسلسل أرقام المباني (1-34)</option>
-              <option value="issues">الأكثر بلاغات وأعطالاً أولاً</option>
-              <option value="worst">الأقل جاهزية أولاً</option>
-              <option value="best">الأفضل حالة أولاً</option>
+              <option value="number">رقم المبنى (1-34)</option>
+              <option value="issues">الأكثر بلاغات</option>
+              <option value="worst">الأقل جاهزية</option>
+              <option value="best">الأعلى جاهزية</option>
             </select>
           </div>
         </div>
@@ -489,12 +484,12 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
                   {bEvals.length === 0 ? (
                     <span className="text-slate-400 text-[11px] flex items-center gap-1.5">
                       <Clock className="w-3.5 h-3.5 text-slate-400" />
-                      <span>لم يتم الفحص الميداني بعد</span>
+                      <span>غير مفحوص</span>
                     </span>
                   ) : totalIssuesCount === 0 ? (
                     <span className="text-emerald-700 font-bold text-[11px] flex items-center gap-1.5">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>سليم بالكامل ({bEvals.length} مرفق مفحوص)</span>
+                      <span>سليم ({bEvals.length} مرفق)</span>
                     </span>
                   ) : (
                     <>
@@ -507,7 +502,7 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
                       {needsMaintCount > 0 && (
                         <span className="text-amber-700 font-bold flex items-center gap-1">
                           <Wrench className="w-3.5 h-3.5" />
-                          <span>{needsMaintCount} يحتاج معالجة</span>
+                          <span>{needsMaintCount} صيانة</span>
                         </span>
                       )}
                       <span className="text-[11px] text-slate-400 mr-auto font-mono">
@@ -518,7 +513,7 @@ export const CampusOverview: React.FC<CampusOverviewProps> = ({
                 </div>
 
                 <div className="text-[11px] text-blue-600 font-bold flex items-center justify-between pt-1">
-                  <span>معاينة المرافق والتفاصيل</span>
+                  <span>عرض المبنى</span>
                   <span className="transform group-hover:-translate-x-1 transition">←</span>
                 </div>
               </div>
